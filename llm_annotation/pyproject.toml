@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neurips2026-locus"
+version = "0.8.0"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+typesafe = ["httpx==0.28.1"]
+openai = ["openai==2.54.0"]
+google = ["google-genai==1.75.0"]
+all = ["httpx==0.28.1", "openai==2.54.0", "google-genai==1.75.0"]
+
+[project.scripts]
+locus-run = "neurips2026_locus.runner:main"
+locus-annotate = "neurips2026_locus.pipeline:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"neurips2026_locus.municipal_law_annotation" = ["*.txt", "*.json"]

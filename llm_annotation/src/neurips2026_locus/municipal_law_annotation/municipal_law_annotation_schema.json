@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "properties": {
+    "primary_function": {
+      "type": "string",
+      "enum": [
+        "Context",
+        "Rules",
+        "Process",
+        "Enforcement",
+        "Structural"
+      ]
+    },
+    "subcategory": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "Buildings",
+        "Business",
+        "Zoning",
+        "Nuisance",
+        "Other",
+        null
+      ],
+      "description": "A topic for Rules or Enforcement; null for Context, Process, or Structural."
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "Low",
+        "Medium",
+        "High"
+      ],
+      "description": "Rating of classification ambiguity and input quality under the rubric in the prompt. Apply Low conditions before Medium, otherwise High. Choose exactly Low, Medium, or High. No explanation."
+    }
+  },
+  "required": [
+    "primary_function",
+    "subcategory",
+    "confidence"
+  ],
+  "additionalProperties": false
+}
