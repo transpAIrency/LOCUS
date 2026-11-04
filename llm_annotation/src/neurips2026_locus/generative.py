@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 from .contract import (
     CLASSIFICATION_SCHEMA,
-    CONTRACT_VERSION,
+    PROMPT_VERSION,
     ContractError,
     compose_input_text,
     contract_sha256,
@@ -14,7 +14,7 @@ from .contract import (
 from .municipal_law_annotation.municipal_law_prompt_utils import load_prompt_parts
 
 DEFAULT_OPENAI_MODEL = "gpt-6-luna"
-POLICY_VERSION = CONTRACT_VERSION
+POLICY_VERSION = PROMPT_VERSION
 
 
 def build_messages(

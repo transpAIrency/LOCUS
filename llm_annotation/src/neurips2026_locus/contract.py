@@ -18,7 +18,13 @@ from .municipal_law_annotation.validate_municipal_law_annotation import (
     _invalid_constant,
 )
 
-CONTRACT_VERSION = "municipal-law-2026-10-30-v1"
+PROMPT_VERSION = "oct2026_codebook_short"
+_LEGACY_PROMPT_VERSION = "municipal-law-2026-10-30-v1"
+# The resource rename preserves the exact policy and provider request bodies.
+# Match only this verified old/new bundle pair; changed policy bytes still fail.
+_POLICY_HASH_COMPATIBILITY = {
+    "4b97dc127eacf6120eca5d38e8464bfd54a1dba4cace7ef969d88a4582952ea2": "ae88767f3ab66c18825b5408b8b4c45c3dd7f446649f92a17f3e4c4cdc7eaa3b",
+}
 PROVIDER_ANNOTATION_FIELDS = {
     "typesafe": "classification_jev",
     "openai": "classification_openai",
@@ -51,6 +57,78 @@ class ContractError(ValueError):
     """An annotation or input violates its declared contract."""
 
 
+def prompt_version_of(metadata: Mapping[str, Any]) -> str | None:
+    """Read the current label or its exact historical alias without changing data."""
+    current = metadata.get("prompt_version")
+    legacy = metadata.get("contract_version")
+    if "prompt_version" in metadata and current != PROMPT_VERSION:
+        raise ContractError("Unknown prompt_version")
+    if "contract_version" in metadata and legacy != _LEGACY_PROMPT_VERSION:
+        raise ContractError("Unknown legacy contract_version")
+    return (
+        PROMPT_VERSION
+        if "prompt_version" in metadata or "contract_version" in metadata
+        else None
+    )
+
+
+def normalize_run_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize verified naming changes without rewriting saved run details."""
+    result = dict(metadata)
+    version = prompt_version_of(result)
+    if version is not None:
+        result.pop("contract_version", None)
+        result["prompt_version"] = version
+        policy_hash = result.get("contract_sha256")
+        if isinstance(policy_hash, str):
+            result["contract_sha256"] = _POLICY_HASH_COMPATIBILITY.get(
+                policy_hash, policy_hash
+            )
+    profiles = {
+        "typesafe": ("individual", 2, "two_stage"),
+        "openai": ("batch", 1, "batch"),
+        "google": ("batch", 1, "batch"),
+    }
+    provider = result.get("provider")
+    profile = profiles.get(provider) if isinstance(provider, str) else None
+    if profile is not None:
+        submission, calls, legacy_mode = profile
+        if (
+            "processing_mode" in result
+            and result.pop("processing_mode") != legacy_mode
+        ):
+            raise ContractError("Processing mode does not match the provider workflow")
+        for key, expected in (
+            ("request_submission", submission),
+            ("calls_per_record", calls),
+        ):
+            if key in result and (
+                type(result[key]) is not type(expected) or result[key] != expected
+            ):
+                raise ContractError(f"Invalid {key} for the provider workflow")
+            result[key] = expected
+    elif any(
+        key in result
+        for key in ("processing_mode", "request_submission", "calls_per_record")
+    ):
+        raise ContractError("Request submission details require a known provider")
+    return result
+
+
+def run_metadata_matches(
+    existing: Mapping[str, Any], requested: Mapping[str, Any]
+) -> bool:
+    """Require every setting to match after the exact prompt-label alias only."""
+    try:
+        return json.dumps(
+            normalize_run_metadata(existing), sort_keys=True, allow_nan=False
+        ) == json.dumps(
+            normalize_run_metadata(requested), sort_keys=True, allow_nan=False
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def is_header_only_record(record: Mapping[str, Any]) -> bool:
     """Match the historical production exclusion rule exactly."""
 
@@ -78,9 +156,9 @@ def compose_input_text(record: Mapping[str, Any]) -> str:
 @lru_cache(maxsize=1)
 def contract_sha256() -> str:
     """Fingerprint the supplied policy, schema, and reference helper files."""
-    digest = sha256(CONTRACT_VERSION.encode())
+    digest = sha256(PROMPT_VERSION.encode())
     for name in (
-        "municipal_law_annotation_prompt_compact.txt",
+        "oct2026_codebook_short.txt",
         "municipal_law_annotation_schema.json",
         "municipal_law_prompt_utils.py",
         "municipal_law_jev_adapter.py",

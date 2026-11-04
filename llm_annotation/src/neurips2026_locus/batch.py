@@ -153,7 +153,9 @@ def configuration(args, *, hash_input: bool = True) -> dict[str, Any]:
         "ledger_schema_version": 1,
         "input_sha256": input_hash,
         "provider": args.provider,
-        "contract_version": POLICY_VERSION,
+        "request_submission": "batch",
+        "calls_per_record": 1,
+        "prompt_version": POLICY_VERSION,
         "contract_sha256": contract_hash(),
         "model": args.model
         or (DEFAULT_OPENAI_MODEL if openai else DEFAULT_GOOGLE_MODEL),
@@ -310,7 +312,7 @@ def initialize(
                             canonical_json(
                                 {
                                     "status": "header_only_excluded",
-                                    "contract_version": POLICY_VERSION,
+                                    "prompt_version": POLICY_VERSION,
                                     "source": {
                                         "id": source_id,
                                         "sha256": digest,
@@ -613,7 +615,7 @@ def collect_results(
                             else length
                         )
                         annotation = {
-                            "contract_version": POLICY_VERSION,
+                            "prompt_version": POLICY_VERSION,
                             "source": {
                                 "id": source_id,
                                 "sha256": digest,
@@ -621,9 +623,10 @@ def collect_results(
                             },
                             "final": classification,
                             "final_metadata": metadata,
-                            "provenance": {
+                            "run_details": {
                                 "provider": config["provider"],
-                                "processing_mode": "batch",
+                                "request_submission": "batch",
+                                "calls_per_record": 1,
                                 "requested_model": config["model"],
                                 "reasoning_effort": config["reasoning_effort"],
                                 "contract_sha256": config["contract_sha256"],

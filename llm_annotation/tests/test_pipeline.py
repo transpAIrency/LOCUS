@@ -122,7 +122,279 @@ def annotation_kwargs(
     }
 
 
+LEGACY_PROMPT_VERSION = "municipal-law-2026-10-30-v1"
+LEGACY_POLICY_SHA256 = (
+    "4b97dc127eacf6120eca5d38e8464bfd54a1dba4cace7ef969d88a4582952ea2"
+)
+LEGACY_BUILDER_SHA256 = (
+    "9379e067aa64204104dc2b817f2f80c4a0a774fa518b767b45773bfc3844522a"
+)
+
+
+def prompt_ledger_snapshot(path):
+    """Read the raw fixture strings whose historical provenance must survive."""
+    with closing(sqlite3.connect(path)) as db:
+        return (
+            dict(
+                db.execute(
+                    "SELECT key,value FROM metadata WHERE key IN "
+                    "('run_metadata','request_builder_sha256')"
+                )
+            ),
+            db.execute(
+                "SELECT source_id,annotation_json FROM annotations ORDER BY source_id"
+            ).fetchall(),
+        )
+
+
+def convert_fixture_to_legacy_prompt_ledger(path):
+    """Represent the pre-rename protocol in an isolated, mocked-run fixture."""
+    with closing(sqlite3.connect(path)) as db, db:
+        encoded = db.execute(
+            "SELECT value FROM metadata WHERE key='run_metadata'"
+        ).fetchone()[0]
+        metadata = json.loads(encoded)
+        metadata.pop("prompt_version")
+        metadata["contract_version"] = LEGACY_PROMPT_VERSION
+        metadata["contract_sha256"] = LEGACY_POLICY_SHA256
+        metadata.pop("request_submission", None)
+        metadata.pop("calls_per_record", None)
+        if metadata.get("provider") == "typesafe":
+            metadata["processing_mode"] = "two_stage"
+        else:
+            metadata.pop("processing_mode", None)
+        db.execute(
+            "UPDATE metadata SET value=? WHERE key='run_metadata'",
+            (pipeline.canonical_json(metadata),),
+        )
+        db.execute(
+            "UPDATE metadata SET value=? WHERE key='request_builder_sha256'",
+            (LEGACY_BUILDER_SHA256,),
+        )
+        for source_id, encoded in db.execute(
+            "SELECT source_id,annotation_json FROM annotations"
+        ).fetchall():
+            annotation = json.loads(encoded)
+            annotation.pop("prompt_version")
+            annotation["contract_version"] = LEGACY_PROMPT_VERSION
+            if "run_details" in annotation:
+                provenance = annotation.pop("run_details")
+                annotation["provenance"] = provenance
+                provenance["processing_mode"] = (
+                    "two_stage" if provenance["provider"] == "typesafe" else "batch"
+                )
+                provenance.pop("request_submission", None)
+                provenance.pop("calls_per_record", None)
+                provenance["contract_sha256"] = LEGACY_POLICY_SHA256
+                provenance["request_builder_sha256"] = LEGACY_BUILDER_SHA256
+            db.execute(
+                "UPDATE annotations SET annotation_json=? WHERE source_id=?",
+                (pipeline.canonical_json(annotation), source_id),
+            )
+    return prompt_ledger_snapshot(path)
+
+
 class PipelineTests(unittest.TestCase):
+    def test_run_details_conversion_keeps_choices_probabilities_and_input_untouched(self):
+        annotation = {
+            "final": {
+                "primary_function": "Rules",
+                "subcategory": "Other",
+                "confidence": "High",
+            },
+            "provenance": {
+                "provider": "typesafe",
+                "processing_mode": "two_stage",
+                "contract_sha256": LEGACY_POLICY_SHA256,
+            },
+            "stage_metadata": {
+                "classification": {
+                    "answers": {
+                        "primary_function": {
+                            "choice": "Rules",
+                            "confidence": 0.9,
+                            "probabilities": {"Rules": 0.92, "Process": 0.08},
+                        }
+                    }
+                }
+            },
+        }
+        original = json.loads(json.dumps(annotation))
+        result = pipeline._public_annotation(annotation, {"content": "A rule."}, 0)
+        self.assertEqual(result["final"], original["final"])
+        self.assertEqual(result["stage_metadata"], original["stage_metadata"])
+        self.assertNotIn("provenance", result)
+        self.assertEqual(result["run_details"]["request_submission"], "individual")
+        self.assertEqual(result["run_details"]["calls_per_record"], 2)
+        self.assertEqual(
+            result["run_details"]["contract_sha256"], LEGACY_POLICY_SHA256
+        )
+        self.assertEqual(annotation, original)
+
+    def test_export_validates_run_details_and_preserves_source_record_provenance(self):
+        source_provenance = {
+            "provider": "original-data-source",
+            "processing_mode": "source-preparation",
+        }
+        write_jsonl(
+            self.input_path,
+            [{"content": "A rule.", "provenance": source_provenance}],
+        )
+        self._annotate()
+        output = self.directory / "details.jsonl"
+        with closing(sqlite3.connect(self.ledger_path)) as db:
+            source_id, encoded = db.execute(
+                "SELECT source_id,annotation_json FROM annotations"
+            ).fetchone()
+            current = json.loads(encoded)
+            compatible = json.loads(encoded)
+            old_details = dict(current["run_details"])
+            old_details.pop("request_submission")
+            old_details.pop("calls_per_record")
+            old_details["processing_mode"] = "two_stage"
+            compatible["provenance"] = old_details
+
+            def export(value):
+                db.execute(
+                    "UPDATE annotations SET annotation_json=? WHERE source_id=?",
+                    (json.dumps(value), source_id),
+                )
+                db.commit()
+                return pipeline.export_augmented_jsonl(
+                    input_path=self.input_path,
+                    ledger_path=self.ledger_path,
+                    output_path=output,
+                    include_excluded_header_only=False,
+                    allow_partial=False,
+                    overwrite=True,
+                )
+
+            export(compatible)
+            published = json.loads(output.read_text())
+            self.assertEqual(published["provenance"], source_provenance)
+            self.assertNotIn("provenance", published["classification_jev"])
+            self.assertEqual(
+                published["classification_jev"]["run_details"], current["run_details"]
+            )
+            stable_output = output.read_text()
+            for bad in ("conflicting_containers", "bool_calls", "float_calls", "not_mapping"):
+                changed = json.loads(encoded)
+                if bad == "conflicting_containers":
+                    changed["provenance"] = dict(current["run_details"])
+                    changed["provenance"]["requested_model"] = "different-model"
+                elif bad == "not_mapping":
+                    changed["run_details"] = None
+                else:
+                    changed["run_details"]["calls_per_record"] = (
+                        True if bad == "bool_calls" else 2.0
+                    )
+                with self.subTest(case=bad), self.assertRaises(pipeline.InputError):
+                    export(changed)
+                self.assertEqual(output.read_text(), stable_output)
+
+    def test_legacy_prompt_ledger_resumes_and_exports_without_rewriting_history(self):
+        write_jsonl(self.input_path, [{"content": "A rule."}])
+        self._annotate()
+        current_metadata, current_annotations = prompt_ledger_snapshot(self.ledger_path)
+        metadata = json.loads(current_metadata["run_metadata"])
+        annotation = json.loads(current_annotations[0][1])
+        for value in (metadata, annotation):
+            self.assertEqual(value["prompt_version"], "oct2026_codebook_short")
+            self.assertNotIn("contract_version", value)
+        self.assertEqual(metadata["request_submission"], "individual")
+        self.assertEqual(metadata["calls_per_record"], 2)
+        self.assertNotIn("processing_mode", metadata)
+        self.assertNotIn("provenance", annotation)
+        self.assertEqual(annotation["run_details"]["request_submission"], "individual")
+        self.assertEqual(annotation["run_details"]["calls_per_record"], 2)
+        self.assertNotIn("processing_mode", annotation["run_details"])
+        historical = convert_fixture_to_legacy_prompt_ledger(self.ledger_path)
+        self.assertEqual(self._annotate(resume=True)["already_complete"], 1)
+        self.assertEqual(FakeJevClient.instances[-1].requests, [])
+        self.assertEqual(prompt_ledger_snapshot(self.ledger_path), historical)
+        output = self.directory / "legacy-export.jsonl"
+        pipeline.export_augmented_jsonl(
+            input_path=self.input_path,
+            ledger_path=self.ledger_path,
+            output_path=output,
+            include_excluded_header_only=False,
+            allow_partial=False,
+            overwrite=False,
+        )
+        published = json.loads(output.read_text())["classification_jev"]
+        self.assertEqual(published["prompt_version"], "oct2026_codebook_short")
+        self.assertNotIn("contract_version", published)
+        self.assertEqual(published["final"], annotation["final"])
+        self.assertEqual(published["stage_metadata"], annotation["stage_metadata"])
+        self.assertNotIn("provenance", published)
+        self.assertNotIn("processing_mode", published["run_details"])
+        self.assertEqual(published["run_details"]["request_submission"], "individual")
+        self.assertEqual(published["run_details"]["calls_per_record"], 2)
+        self.assertEqual(
+            published["run_details"]["contract_sha256"], LEGACY_POLICY_SHA256
+        )
+        self.assertEqual(
+            published["run_details"]["request_builder_sha256"], LEGACY_BUILDER_SHA256
+        )
+        self.assertEqual(prompt_ledger_snapshot(self.ledger_path), historical)
+
+    def test_legacy_prompt_resume_reuses_a_checkpointed_classification_stage(self):
+        write_jsonl(self.input_path, [{"content": "A rule."}])
+        stop = Event()
+        decide = FakeJevClient.decide
+
+        def stop_after_response(client, payload):
+            result = decide(client, payload)
+            stop.set()
+            return result
+
+        with patch.object(pipeline, "JevClient", FakeJevClient), patch.object(
+            FakeJevClient, "decide", stop_after_response
+        ):
+            pipeline.annotate(
+                **annotation_kwargs(self.input_path, self.ledger_path), stop_event=stop
+            )
+        self.assertEqual(len(FakeJevClient.instances[-1].requests), 1)
+        historical, _ = convert_fixture_to_legacy_prompt_ledger(self.ledger_path)
+        with closing(sqlite3.connect(self.ledger_path)) as db:
+            cached = db.execute("SELECT * FROM responses").fetchone()
+        self.assertEqual(self._annotate(resume=True)["annotated"], 1)
+        requests = FakeJevClient.instances[-1].requests
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(set(requests[0]["questions"]), {"confidence_label"})
+        self.assertEqual(prompt_ledger_snapshot(self.ledger_path)[0], historical)
+        with closing(sqlite3.connect(self.ledger_path)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT * FROM responses WHERE source_id=? AND request_sha256=?",
+                    cached[:2],
+                ).fetchone(),
+                cached,
+            )
+
+    def test_legacy_prompt_alias_does_not_accept_an_unknown_policy_hash(self):
+        write_jsonl(self.input_path, [{"content": "A rule."}])
+        self._annotate()
+        convert_fixture_to_legacy_prompt_ledger(self.ledger_path)
+        with closing(sqlite3.connect(self.ledger_path)) as db, db:
+            encoded = db.execute(
+                "SELECT value FROM metadata WHERE key='run_metadata'"
+            ).fetchone()[0]
+            metadata = json.loads(encoded)
+            metadata["contract_sha256"] = "0" * 64
+            db.execute(
+                "UPDATE metadata SET value=? WHERE key='run_metadata'",
+                (json.dumps(metadata),),
+            )
+        with patch.object(pipeline, "JevClient") as client:
+            with self.assertRaises(pipeline.InputError):
+                pipeline.annotate(
+                    **annotation_kwargs(
+                        self.input_path, self.ledger_path, resume=True
+                    )
+                )
+        client.assert_not_called()
+
     def test_transport_hash_mismatch_is_rejected_before_cache_or_confidence(self):
         write_jsonl(self.input_path, [{"content": "A rule."}])
         decide = FakeJevClient.decide
@@ -723,6 +995,14 @@ class PipelineTests(unittest.TestCase):
             structural_row["classification_jev"]["final"]["confidence"], "High"
         )
         self.assertIsNone(structural_row["classification_jev"]["final"]["subcategory"])
+        for row in output_rows:
+            annotation = row["classification_jev"]
+            self.assertNotIn("provenance", annotation)
+            self.assertEqual(
+                annotation["run_details"]["request_submission"], "individual"
+            )
+            self.assertEqual(annotation["run_details"]["calls_per_record"], 2)
+            self.assertNotIn("processing_mode", annotation["run_details"])
 
     def test_header_only_rows_are_explicitly_excluded_without_a_model_call(
         self,
@@ -1515,7 +1795,7 @@ class PipelineTests(unittest.TestCase):
             source_id, original = db.execute(
                 "SELECT source_id, annotation_json FROM annotations"
             ).fetchone()
-            for field in ("final", "source", "contract_version"):
+            for field in ("final", "source", "prompt_version"):
                 changed = json.loads(original)
                 if field == "final":
                     changed["final"]["subcategory"] = "Housing"
@@ -1523,7 +1803,7 @@ class PipelineTests(unittest.TestCase):
                     changed["source"]["id"] = "different-source"
                 else:
                     # A row must not opt out of validation by removing its version.
-                    changed.pop("contract_version")
+                    changed.pop("prompt_version")
                 db.execute(
                     "UPDATE annotations SET annotation_json=? WHERE source_id=?",
                     (json.dumps(changed), source_id),
@@ -1579,7 +1859,7 @@ class PipelineTests(unittest.TestCase):
             source_id, original = db.execute(
                 "SELECT source_id, annotation_json FROM annotations"
             ).fetchone()
-            for field in ("source", "status", "contract_version"):
+            for field in ("source", "status", "prompt_version"):
                 changed = json.loads(original)
                 if field == "source":
                     changed[field]["id"] = "different-row"

@@ -27,7 +27,10 @@ import time
 from typing import Any, Iterator, Mapping
 
 from .contract import (
-    CONTRACT_VERSION,
+    PROMPT_VERSION,
+    prompt_version_of,
+    normalize_run_metadata,
+    run_metadata_matches,
     PROVIDER_ANNOTATION_FIELDS,
     ContractError,
     compose_input_text,
@@ -384,6 +387,26 @@ def _public_annotation(
     annotation: Mapping[str, Any], record: Mapping[str, Any], source_index: int
 ) -> dict[str, Any]:
     result = dict(annotation)
+    version = prompt_version_of(result)
+    if version is not None:
+        result.pop("contract_version", None)
+        result["prompt_version"] = version
+    details = []
+    for name in ("provenance", "run_details"):
+        if name not in annotation:
+            continue
+        value = annotation[name]
+        if not isinstance(value, Mapping):
+            raise InputError("Annotation run details must be an object")
+        try:
+            details.append(normalize_run_metadata(value))
+        except ContractError as exc:
+            raise InputError("Annotation run details do not match its protocol") from exc
+    if len(details) == 2 and canonical_json(details[0]) != canonical_json(details[1]):
+        raise InputError("Annotation has conflicting provenance and run_details")
+    if details:
+        result.pop("provenance", None)
+        result["run_details"] = details[-1]
     if isinstance(annotation.get("source"), Mapping):
         result["source"] = dict(annotation["source"])
         if "locator" in annotation["source"]:
@@ -506,7 +529,7 @@ def annotate_record(
             lambda body: normalize_jev_annotation(first, body),
         )
         return {
-            "contract_version": CONTRACT_VERSION,
+            "prompt_version": PROMPT_VERSION,
             "source": {
                 "id": source_id,
                 "sha256": source_sha256,
@@ -517,9 +540,10 @@ def annotate_record(
                 "classification": classification_metadata,
                 "confidence": confidence_metadata,
             },
-            "provenance": {
+            "run_details": {
                 "provider": "typesafe",
-                "processing_mode": "two_stage",
+                "request_submission": "individual",
+                "calls_per_record": 2,
                 "annotated_at_utc": utc_now(),
                 "endpoint": client.endpoint,
                 "requested_model": model,
@@ -573,8 +597,10 @@ def check_request_builders(connection: sqlite3.Connection) -> None:
     # Releases 0.8/0.9 used earlier fingerprints. This verified mapping accepts their
     # original requests without overwriting historical implementation provenance.
     legacy = {
-        "fe48aee9b30b0b70d0bf7974b45fc549c2a05625fbb4e99eec2bf85d261252b6": "9379e067aa64204104dc2b817f2f80c4a0a774fa518b767b45773bfc3844522a",
-        "7ad95a0934acce30a75a547b01e0f43a6ab14fc2bb82ef34a1b0a9fb8b7305d1": "9379e067aa64204104dc2b817f2f80c4a0a774fa518b767b45773bfc3844522a",
+        "fe48aee9b30b0b70d0bf7974b45fc549c2a05625fbb4e99eec2bf85d261252b6": "c5f726724fb131825ac61316f39aa43ba1e23a169a4aac6703f2bdb0eee4aec4",
+        "7ad95a0934acce30a75a547b01e0f43a6ab14fc2bb82ef34a1b0a9fb8b7305d1": "c5f726724fb131825ac61316f39aa43ba1e23a169a4aac6703f2bdb0eee4aec4",
+        "9379e067aa64204104dc2b817f2f80c4a0a774fa518b767b45773bfc3844522a": "c5f726724fb131825ac61316f39aa43ba1e23a169a4aac6703f2bdb0eee4aec4",
+        "03690befa115d320881bc92a4c4474f42dd5768de1b35916ae5e8b167769c829": "c5f726724fb131825ac61316f39aa43ba1e23a169a4aac6703f2bdb0eee4aec4",
     }
     current = request_builder_sha256()
     if stored is not None and stored[0] != current and legacy.get(stored[0]) != current:
@@ -671,7 +697,7 @@ class AnnotationLedger:
         try:
             if existed:
                 existing = ledger_metadata(self.connection)
-                if canonical_json(existing) != canonical_json(dict(run_metadata)):
+                if not run_metadata_matches(existing, run_metadata):
                     raise InputError(
                         "Ledger metadata does not match this input or annotation configuration; "
                         "start a new ledger rather than mixing runs."
@@ -817,18 +843,17 @@ class AnnotationLedger:
             raise InputError("Ledger contains invalid annotation JSON") from exc
         if not isinstance(decoded, dict):
             raise InputError("Ledger has an invalid annotation JSON object")
-        version = decoded.get("contract_version")
-        expected_version = self.run_metadata.get("contract_version")
-        current_run = isinstance(expected_version, str) and expected_version.startswith(
-            "municipal-law-"
-        )
+        try:
+            version = prompt_version_of(decoded)
+            expected_version = prompt_version_of(self.run_metadata)
+        except ContractError as exc:
+            raise InputError("Ledger annotation has an invalid prompt version") from exc
+        current_run = expected_version is not None
         if current_run and version != expected_version:
             raise InputError(
-                "Ledger annotation contract does not match its run metadata"
+                "Ledger annotation prompt does not match its run metadata"
             )
-        if current_run or (
-            isinstance(version, str) and version.startswith("municipal-law-")
-        ):
+        if current_run or version is not None:
             if row[1] == "annotated":
                 try:
                     parse_annotation(decoded.get("final"))
@@ -869,9 +894,10 @@ def run_metadata(
     metadata = {
         "ledger_schema_version": LEDGER_SCHEMA_VERSION,
         "input_sha256": input_sha256,
-        "contract_version": CONTRACT_VERSION,
+        "prompt_version": PROMPT_VERSION,
         "contract_sha256": contract_sha256(),
-        "processing_mode": "two_stage",
+        "request_submission": "individual",
+        "calls_per_record": 2,
         "provider": "typesafe",
         "model": model,
         "endpoint": endpoint,
@@ -997,7 +1023,7 @@ def annotate(
                         source_sha256=source_digest,
                         status="failed",
                         annotation={
-                            "contract_version": CONTRACT_VERSION,
+                            "prompt_version": PROMPT_VERSION,
                             "status": "failed",
                             "source": {"id": source_id, "sha256": source_digest},
                             "error": {
@@ -1101,7 +1127,7 @@ def annotate(
                             source_sha256=source_digest,
                             status="header_only_excluded",
                             annotation={
-                                "contract_version": CONTRACT_VERSION,
+                                "prompt_version": PROMPT_VERSION,
                                 "source": {
                                     "id": source_id,
                                     "sha256": source_digest,

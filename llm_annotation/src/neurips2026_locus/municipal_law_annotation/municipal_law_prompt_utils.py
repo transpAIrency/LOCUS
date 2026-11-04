@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 _DIRECTORY = Path(__file__).resolve().parent
-_DEFAULT_PROMPT = _DIRECTORY / "municipal_law_annotation_prompt_compact.txt"
+_DEFAULT_PROMPT = _DIRECTORY / "oct2026_codebook_short.txt"
 _DEFAULT_SCHEMA = _DIRECTORY / "municipal_law_annotation_schema.json"
 _INPUT_HEADING = "# Excerpt to classify\n"
 _PLACEHOLDER = "{{EXCERPT}}"

@@ -124,6 +124,49 @@ class FakeBatchService:
 
 
 class BatchTests(unittest.TestCase):
+    def test_legacy_prompt_prepared_batches_keep_their_requests_and_resume(self):
+        from test_pipeline import (
+            convert_fixture_to_legacy_prompt_ledger,
+            prompt_ledger_snapshot,
+        )
+
+        for provider in ("openai", "google"):
+            with (
+                self.subTest(provider=provider),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                service, _ = self.fixture(Path(temporary), provider)
+                self.run_action("prepare", resume=False)
+                prepared = self.query(
+                    "SELECT id,request_sha256 FROM batch_requests ORDER BY id"
+                )
+                historical, _ = convert_fixture_to_legacy_prompt_ledger(self.ledger)
+                self.assertEqual(self.run_action("submit"), 0)
+                self.assertEqual(self.run_action("collect"), 0)
+                self.assertEqual(service.submissions, 1)
+                self.assertEqual(
+                    self.query(
+                        "SELECT id,request_sha256 FROM batch_requests ORDER BY id"
+                    ),
+                    prepared,
+                )
+                self.assertEqual(prompt_ledger_snapshot(self.ledger)[0], historical)
+                self.assertEqual(
+                    self.run_action("prepare", "--output", str(self.output)), 0
+                )
+                for line in self.output.read_text().splitlines():
+                    annotation = json.loads(line)[f"classification_{provider}"]
+                    self.assertEqual(
+                        annotation["prompt_version"], "oct2026_codebook_short"
+                    )
+                    self.assertNotIn("contract_version", annotation)
+                    self.assertNotIn("provenance", annotation)
+                    self.assertEqual(
+                        annotation["run_details"]["request_submission"], "batch"
+                    )
+                    self.assertEqual(annotation["run_details"]["calls_per_record"], 1)
+                    self.assertNotIn("processing_mode", annotation["run_details"])
+
     def test_read_retry_stops_on_excessive_server_delay(self):
         error = httpx.HTTPStatusError(
             "Rate limited",
@@ -404,7 +447,13 @@ class BatchTests(unittest.TestCase):
                         },
                     )
                     self.assertNotIn("review", annotation)
-                    self.assertEqual(annotation["provenance"]["provider"], provider)
+                    self.assertEqual(annotation["run_details"]["provider"], provider)
+                    self.assertNotIn("provenance", annotation)
+                    self.assertEqual(
+                        annotation["run_details"]["request_submission"], "batch"
+                    )
+                    self.assertEqual(annotation["run_details"]["calls_per_record"], 1)
+                    self.assertNotIn("processing_mode", annotation["run_details"])
                 self.assertNotIn("NOT MODEL INPUT", json.dumps(service.uploads))
 
     def test_missing_and_error_results_are_retained_not_fabricated(self):
@@ -556,7 +605,7 @@ class BatchTests(unittest.TestCase):
 
     def test_old_topic_protocol_and_changed_effort_cannot_resume(self):
         for key, old_value in (
-            ("contract_version", "locus-generative-1"),
+            ("prompt_version", "locus-generative-1"),
             ("reasoning_effort", "none"),
         ):
             with self.subTest(key=key), tempfile.TemporaryDirectory() as temporary:

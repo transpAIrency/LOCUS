@@ -291,7 +291,9 @@ def preflight(args, stop_event=None):
         with closing(
             pipeline.AnnotationLedger.open_readonly(local_args.ledger)
         ) as ledger:
-            if pipeline.ledger_metadata(ledger.connection) != config:
+            if not pipeline.run_metadata_matches(
+                pipeline.ledger_metadata(ledger.connection), config
+            ):
                 raise pipeline.InputError(
                     f"{provider} ledger is incompatible; use a new --name"
                 )

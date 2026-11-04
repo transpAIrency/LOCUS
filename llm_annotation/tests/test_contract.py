@@ -29,6 +29,73 @@ def response(primary="Rules", topic="Zoning"):
 
 
 class ContractTests(unittest.TestCase):
+    def test_submission_profiles_normalize_legacy_layout_without_mutating_it(self):
+        for provider, mode, submission, calls in (
+            ("typesafe", "two_stage", "individual", 2),
+            ("openai", "batch", "batch", 1),
+            ("google", "batch", "batch", 1),
+        ):
+            for legacy in (
+                {"provider": provider, "processing_mode": mode},
+                {"provider": provider},
+            ):
+                with self.subTest(legacy=legacy):
+                    original = dict(legacy)
+                    normalized = contract.normalize_run_metadata(legacy)
+                    self.assertEqual(normalized["request_submission"], submission)
+                    self.assertEqual(normalized["calls_per_record"], calls)
+                    self.assertNotIn("processing_mode", normalized)
+                    self.assertEqual(legacy, original)
+
+    def test_submission_profiles_reject_conflicting_modes_and_noninteger_calls(self):
+        for details in (
+            {"provider": "typesafe", "processing_mode": "batch"},
+            {"provider": "google", "processing_mode": "two_stage"},
+            {"provider": "typesafe", "request_submission": "batch"},
+            {"provider": "openai", "request_submission": "individual"},
+            {"provider": "typesafe", "calls_per_record": 1},
+            {"provider": "typesafe", "calls_per_record": 2.0},
+            {"provider": "openai", "calls_per_record": True},
+            {"provider": "openai", "calls_per_record": 1.0},
+            {"provider": "unknown", "request_submission": "batch"},
+        ):
+            with (
+                self.subTest(details=details),
+                self.assertRaises(contract.ContractError),
+            ):
+                contract.normalize_run_metadata(details)
+
+    def test_named_prompt_version_loads_the_renamed_policy(self):
+        self.assertEqual(contract.PROMPT_VERSION, "oct2026_codebook_short")
+        prompt = contract._POLICY_DIR / "oct2026_codebook_short.txt"
+        self.assertEqual(load_prompt_parts(prompt), load_prompt_parts())
+        self.assertFalse(
+            (
+                contract._POLICY_DIR / "municipal_law_annotation_prompt_compact.txt"
+            ).exists()
+        )
+
+    def test_legacy_prompt_alias_is_exact_and_conflicting_versions_are_rejected(self):
+        self.assertEqual(
+            contract.prompt_version_of(
+                {"contract_version": "municipal-law-2026-10-30-v1"}
+            ),
+            "oct2026_codebook_short",
+        )
+        for metadata in (
+            {"contract_version": "locus-generative-1"},
+            {"prompt_version": "unsupported-prompt"},
+            {
+                "prompt_version": "oct2026_codebook_short",
+                "contract_version": "unsupported-prompt",
+            },
+        ):
+            with (
+                self.subTest(metadata=metadata),
+                self.assertRaises(contract.ContractError),
+            ):
+                contract.prompt_version_of(metadata)
+
     def test_request_fingerprint_ignores_comments_docs_and_export_only_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
