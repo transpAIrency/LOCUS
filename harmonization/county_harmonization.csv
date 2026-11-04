@@ -1,5 +1,5 @@
 county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,selected_city_county,selected_page_count,selection_reason
-01001,Autauga County,AL,doc_72729d983307b2add027da66,Prattville,city,922,strictly_longest
+01001,Autauga County,AL,doc_72729d983307b2add027da66,Prattville,city,922,only_eligible_document
 01003,Baldwin County,AL,doc_8cb376daf17d94e94d196819,Fairhope,city,1244,strictly_longest
 01005,Barbour County,AL,doc_9745c34ccc06dbb0108b3186,Eufaula,city,500,only_eligible_document
 01007,Bibb County,AL,,,,,no_mapped_document
@@ -9,7 +9,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 01015,Calhoun County,AL,doc_e361e236635c2fd7bcc103fa,Jacksonville,city,716,strictly_longest
 01017,Chambers County,AL,doc_49ac8df0ba83d0d75cac1da3,Lanett,city,702,strictly_longest
 01019,Cherokee County,AL,,,,,no_mapped_document
-01021,Chilton County,AL,doc_56eca99cf1c4aa8307ed68bf,Calera,city,506,strictly_longest
+01021,Chilton County,AL,doc_e5703ebb88089aa4c48b25ba,Clanton,city,472,only_eligible_document
 01023,Choctaw County,AL,doc_ecbf28dd792af540c75d248f,Butler,city,368,only_eligible_document
 01025,Clarke County,AL,,,,,no_mapped_document
 01027,Clay County,AL,,,,,no_mapped_document
@@ -20,7 +20,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 01037,Coosa County,AL,,,,,no_mapped_document
 01039,Covington County,AL,doc_80242d727b9cd6fbfd76eda0,Andalusia,city,664,strictly_longest
 01041,Crenshaw County,AL,,,,,no_mapped_document
-01043,Cullman County,AL,doc_b43ba52c0922f3caec2f60dc,Cullman,city,924,strictly_longest
+01043,Cullman County,AL,doc_b43ba52c0922f3caec2f60dc,Cullman,city,924,only_eligible_document
 01045,Dale County,AL,doc_5aaf5697085ae1d289fd2bcf,Dothan,city,1016,strictly_longest
 01047,Dallas County,AL,doc_a43941c387c506ff1ffdf229,Selma,city,1360,only_eligible_document
 01049,DeKalb County,AL,doc_91353f19f05cd8422101a476,Fort Payne,city,616,only_eligible_document
@@ -32,7 +32,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 01061,Geneva County,AL,doc_49acf5a2f34bad8197fc0133,Geneva,city,486,only_eligible_document
 01063,Greene County,AL,,,,,no_mapped_document
 01065,Hale County,AL,doc_666208845c3c681b550db4fe,Moundville,city,650,only_eligible_document
-01067,Henry County,AL,doc_5aaf5697085ae1d289fd2bcf,Dothan,city,1016,only_eligible_document
+01067,Henry County,AL,,,,,no_eligible_document_after_population_screen
 01069,Houston County,AL,doc_5aaf5697085ae1d289fd2bcf,Dothan,city,1016,only_eligible_document
 01071,Jackson County,AL,doc_97d2577346c38ab9dd43667d,Scottsboro,city,714,only_eligible_document
 01073,Jefferson County,AL,doc_45f6ab55467a55eb31bbe79d,Birmingham,city,2200,strictly_longest
@@ -50,14 +50,14 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 01097,Mobile County,AL,doc_8ca33a726df92330d6c91665,Mobile,city,1804,strictly_longest
 01099,Monroe County,AL,doc_dfed88f436f4bbc60852291e,Monroeville,city,600,only_eligible_document
 01101,Montgomery County,AL,doc_1e035b934cada468c85ef534,Montgomery,city,1386,only_eligible_document
-01103,Morgan County,AL,doc_71e859e997f7c831577ee16c,Huntsville,city,1568,strictly_longest
+01103,Morgan County,AL,doc_ad0f2e9a9d8347cf9acaa438,Hartselle,city,598,strictly_longest
 01105,Perry County,AL,,,,,no_mapped_document
 01107,Pickens County,AL,doc_8127b826eff753aa4dbf5210,Aliceville,city,260,only_eligible_document
 01109,Pike County,AL,,,,,no_mapped_document
 01111,Randolph County,AL,,,,,no_mapped_document
 01113,Russell County,AL,doc_71c089f899400532c6ff6dd3,Phenix City,city,742,only_eligible_document
 01115,St. Clair County,AL,doc_bc850feb66cd8c051b799f30,Moody,city,840,strictly_longest
-01117,Shelby County,AL,doc_45f6ab55467a55eb31bbe79d,Birmingham,city,2200,strictly_longest
+01117,Shelby County,AL,doc_cdf09c9378ef3750c44cd00a,Alabaster,city,1160,strictly_longest
 01119,Sumter County,AL,,,,,no_mapped_document
 01121,Talladega County,AL,doc_393ecd6ef4992560df8f4094,Sylacauga,city,674,strictly_longest
 01123,Tallapoosa County,AL,doc_951c92889eeed38917835581,Alexander City,city,526,only_eligible_document
@@ -244,7 +244,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 06111,Ventura County,CA,doc_40190fbbc0c9c08b608c36ee,Ventura,county,1572,strictly_longest
 06113,Yolo County,CA,doc_10ef7813f647249ed0782fcb,Davis,city,1733,strictly_longest
 06115,Yuba County,CA,doc_232ee091a263c17480065e18,Yuba,county,1428,strictly_longest
-08001,Adams County,CO,doc_4a94de0a0f6307bfc58fce96,Arvada,city,3164,strictly_longest
+08001,Adams County,CO,doc_d7e56628fa482bb81b41cd0e,Thornton,city,1750,strictly_longest
 08003,Alamosa County,CO,doc_2099b8be0abbfd3be25ecd00,Alamosa,city,1018,only_eligible_document
 08005,Arapahoe County,CO,doc_14ffaa292d7fc5c15c007879,Aurora,city,1642,strictly_longest
 08007,Archuleta County,CO,doc_ea8801dbef9377f4075de3fd,Pagosa Springs,city,792,only_eligible_document
@@ -306,7 +306,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 08117,Summit County,CO,doc_8285d23b0c2f5ccafedaeb5c,Frisco,city,1280,strictly_longest
 08119,Teller County,CO,doc_f43deabc68ad89b2e1b86d34,Woodland Park,city,738,strictly_longest
 08121,Washington County,CO,doc_614734a7c4bed439b3ecc035,Akron,city,145,only_eligible_document
-08123,Weld County,CO,doc_d7e56628fa482bb81b41cd0e,Thornton,city,1750,strictly_longest
+08123,Weld County,CO,doc_1c8dfb2824863d92f8cede86,Greeley,city,1330,strictly_longest
 08125,Yuma County,CO,doc_38028ab98fbae96da892fdbb,Yuma,city,482,only_eligible_document
 09110,Capitol Planning Region,CT,doc_fc4e5adbcbb62b209ce14543,Hartford,city,1484,strictly_longest
 09120,Greater Bridgeport Planning Region,CT,doc_56e337298825fbc0bd09df75,Stratford,city,1018,strictly_longest
@@ -418,7 +418,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 13057,Cherokee County,GA,doc_d4ded3c69eebd2d759b5da74,Canton,city,1280,strictly_longest
 13059,Clarke County,GA,doc_73c6408987066fdd23f1a760,Winterville,city,546,only_eligible_document
 13061,Clay County,GA,,,,,no_mapped_document
-13063,Clayton County,GA,doc_6e949a06924ee7400d7ac188,College Park,city,1612,strictly_longest
+13063,Clayton County,GA,doc_fb3235db3ff73eccf2697aba,Forest Park,city,1426,strictly_longest
 13065,Clinch County,GA,,,,,no_mapped_document
 13067,Cobb County,GA,doc_ebb0c44b87eeb3e7727667fd,Kennesaw,city,1838,strictly_longest
 13069,Coffee County,GA,doc_ea2206eabbdc3d06538a3929,Douglas,city,1168,strictly_longest
@@ -464,7 +464,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 13149,Heard County,GA,doc_6a74e2a53b32169243f2ec17,Heard,county,656,strictly_longest
 13151,Henry County,GA,doc_0a5ecc5a838dbdce377f2f68,Henry,county,1182,strictly_longest
 13153,Houston County,GA,doc_dca3f0133eccaf3cce2fece0,Perry,city,1346,strictly_longest
-13155,Irwin County,GA,doc_2030e25851a574e03ca8c51f,Fitzgerald,city,862,strictly_longest
+13155,Irwin County,GA,doc_cf4c51531300d896b3b32fdb,Ocilla,city,522,only_eligible_document
 13157,Jackson County,GA,doc_fcf956bbedb63376a2f9b71c,Jackson,county,1194,strictly_longest
 13159,Jasper County,GA,doc_c4b267a7ef518242c5b847b1,Jasper,county,712,strictly_longest
 13161,Jeff Davis County,GA,doc_8415ab0138231104bd3c56d2,Jeff Davis,county,372,only_eligible_document
@@ -498,9 +498,9 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 13219,Oconee County,GA,doc_ed0fbe405ab2526b4f3e1d90,Oconee,county,1532,strictly_longest
 13221,Oglethorpe County,GA,doc_749937dfb8f19cfeffabdcef,Oglethorpe,county,332,only_eligible_document
 13223,Paulding County,GA,doc_9c7e26abe8aa226abe75110f,Paulding,county,1684,strictly_longest
-13225,Peach County,GA,doc_dca3f0133eccaf3cce2fece0,Perry,city,1346,strictly_longest
+13225,Peach County,GA,doc_92f502b8fcf87a2dead62c31,Warner Robins,city,1308,strictly_longest
 13227,Pickens County,GA,doc_9e78bc68407c794d070cb2e0,Jasper,city,1072,strictly_longest
-13229,Pierce County,GA,doc_6a8eed17d3c81fd767876bd3,Waycross,city,1142,strictly_longest
+13229,Pierce County,GA,doc_c5229359489a0d4c4872bd7e,Blackshear,city,520,strictly_longest
 13231,Pike County,GA,,,,,no_mapped_document
 13233,Polk County,GA,doc_5ea4a2a2420979f33e1f08bc,Polk,county,704,strictly_longest
 13235,Pulaski County,GA,doc_6e6f8fc9d9ed73a69927cda6,Hawkinsville,city,662,strictly_longest
@@ -576,7 +576,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 16043,Fremont County,ID,doc_2c85f173df5acdd53845b5ed,Ashton,city,101,only_eligible_document
 16045,Gem County,ID,doc_1f024f208f820750c560548f,Emmett,city,696,strictly_longest
 16047,Gooding County,ID,doc_69ed777c48d8f7388973675a,Gooding,city,214,strictly_longest
-16049,Idaho County,ID,doc_19f6c56e7ef05b85c3ce45b5,Kamiah,city,187,strictly_longest
+16049,Idaho County,ID,doc_8f40ac3a00967183bb67560b,Cottonwood,city,105,strictly_longest
 16051,Jefferson County,ID,doc_da1895b5053aba362718d870,Jefferson,county,406,strictly_longest
 16053,Jerome County,ID,doc_edc7a3caeedba1e7d220306b,Jerome,city,308,strictly_longest
 16055,Kootenai County,ID,doc_a1c4f1345547ac4d2c0b9801,Post Falls,city,774,strictly_longest
@@ -601,7 +601,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 17005,Bond County,IL,doc_ba5d98cbf669d0c4418bd109,Greenville,city,532,only_eligible_document
 17007,Boone County,IL,doc_0c23ac2198066461f02946f4,Belvidere,city,1232,strictly_longest
 17009,Brown County,IL,,,,,no_mapped_document
-17011,Bureau County,IL,doc_899ef774e620a2ff5aaedc45,Peru,city,884,strictly_longest
+17011,Bureau County,IL,doc_8fb48c50bda2d92f830cafcf,Ladd,city,785,strictly_longest
 17013,Calhoun County,IL,,,,,no_mapped_document
 17015,Carroll County,IL,doc_7d8c8bde9e3c0b74a2b3d5ca,Savanna,city,303,strictly_longest
 17017,Cass County,IL,doc_a2e669831b78ea6ab2f53378,Ashland,city,652,strictly_longest
@@ -613,11 +613,11 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 17029,Coles County,IL,doc_b9748ee2f0a3390da81ec76c,Mattoon,city,260,strictly_longest
 17031,Cook County,IL,doc_46cf6b95fed4b63bc635b5f7,Chicago,city,3073,strictly_longest
 17033,Crawford County,IL,,,,,no_mapped_document
-17035,Cumberland County,IL,doc_5e6a76e7704473db71817a11,Casey,city,696,only_eligible_document
+17035,Cumberland County,IL,,,,,no_eligible_document_after_population_screen
 17037,DeKalb County,IL,doc_54b971b54909aac738ed8fad,Sandwich,city,910,strictly_longest
 17039,De Witt County,IL,doc_e0d814040c45dae7bc542f70,Farmer City,city,299,strictly_longest
 17041,Douglas County,IL,doc_79c78806837bc4f86547334e,Tuscola,city,431,strictly_longest
-17043,DuPage County,IL,doc_46cf6b95fed4b63bc635b5f7,Chicago,city,3073,strictly_longest
+17043,DuPage County,IL,doc_9ab4f7f8105637916da22c66,Naperville,city,1936,strictly_longest
 17045,Edgar County,IL,doc_5fbccc8c2c855f8ca52c65a7,Paris,city,404,strictly_longest
 17047,Edwards County,IL,doc_92f180838723e06e59f6c28c,Grayville,city,275,only_eligible_document
 17049,Effingham County,IL,doc_296647df8b2ae85a3bf21ff4,Effingham,city,1750,strictly_longest
@@ -636,7 +636,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 17075,Iroquois County,IL,doc_74c5a5a751f73c025482f576,Watseka,city,492,strictly_longest
 17077,Jackson County,IL,doc_562277909f79a47b47dc4b83,Carbondale,city,619,only_eligible_document
 17079,Jasper County,IL,,,,,no_mapped_document
-17081,Jefferson County,IL,doc_35bebf63433f3ed1dd444896,Centralia,city,594,strictly_longest
+17081,Jefferson County,IL,doc_addedd6f4cf2b1eb8906f00f,Mount Vernon,city,489,only_eligible_document
 17083,Jersey County,IL,doc_53aaf0123d73b4aa83671208,Grafton,city,287,strictly_longest
 17085,Jo Daviess County,IL,doc_13d67b4dda13191a106e1443,Galena,city,634,strictly_longest
 17087,Johnson County,IL,doc_7ed63f2bf91dc7a7689b4568,Vienna,city,237,strictly_longest
@@ -647,8 +647,8 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 17097,Lake County,IL,doc_78b516b206e0dddaf885edba,Highland Park,city,1766,strictly_longest
 17099,LaSalle County,IL,doc_9c08fad1378d31d876cf4827,Ottawa,city,1144,strictly_longest
 17101,Lawrence County,IL,,,,,no_mapped_document
-17103,Lee County,IL,doc_a0e9986de718f08e5c3d77f7,Rochelle,city,1150,strictly_longest
-17105,Livingston County,IL,doc_64d52d6a5c791ffc24cbd8cf,Streator,city,984,strictly_longest
+17103,Lee County,IL,doc_39e8fd96e5c90e9cee558c25,Dixon,city,525,strictly_longest
+17105,Livingston County,IL,doc_6bdc05364a81e45f67bd0914,Pontiac,city,660,strictly_longest
 17107,Logan County,IL,doc_2f23f62ffd4b88b52ba92b3d,Lincoln,city,656,strictly_longest
 17109,McDonough County,IL,doc_3db36ffff1027e79932264f0,Macomb,city,1000,only_eligible_document
 17111,McHenry County,IL,doc_6e4f9eca4c1e8e143d1df353,Crystal Lake,city,1720,strictly_longest
@@ -682,7 +682,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 17167,Sangamon County,IL,doc_37d101e78280a5c3f5097cd6,Springfield,city,1450,strictly_longest
 17169,Schuyler County,IL,doc_0dec10412353c1324312f91e,Rushville,city,370,only_eligible_document
 17171,Scott County,IL,,,,,no_mapped_document
-17173,Shelby County,IL,doc_91b4dd2930f6d593ad598be5,Pana,city,602,strictly_longest
+17173,Shelby County,IL,doc_12222e4715699f23ae98f03f,Shelbyville,city,412,strictly_longest
 17175,Stark County,IL,,,,,no_mapped_document
 17177,Stephenson County,IL,doc_b7f8ba4be6f3e83cd08e72cd,Stephenson,county,511,strictly_longest
 17179,Tazewell County,IL,doc_9e4c669e29b7172969e32450,East Peoria,city,1290,strictly_longest
@@ -690,12 +690,12 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 17183,Vermilion County,IL,doc_af51e7d7ded95e3a0331e296,Danville,city,928,strictly_longest
 17185,Wabash County,IL,doc_75d2d773f457b78420f79078,Mount Carmel,city,860,only_eligible_document
 17187,Warren County,IL,,,,,no_mapped_document
-17189,Washington County,IL,doc_35bebf63433f3ed1dd444896,Centralia,city,594,strictly_longest
+17189,Washington County,IL,doc_2152238d911c4d19a9417b27,Nashville,city,274,only_eligible_document
 17191,Wayne County,IL,doc_406594aa8c4bbdda04f7a465,Fairfield,city,315,only_eligible_document
 17193,White County,IL,doc_92f180838723e06e59f6c28c,Grayville,city,275,strictly_longest
 17195,Whiteside County,IL,doc_9444b55631d554b8617ebcb6,Sterling,city,1450,strictly_longest
 17197,Will County,IL,doc_4c0336a7d93b8bcd94e532f4,Joliet,city,2272,strictly_longest
-17199,Williamson County,IL,doc_562277909f79a47b47dc4b83,Carbondale,city,619,strictly_longest
+17199,Williamson County,IL,doc_f1fa6952618f6aebf4f95903,Johnston City,city,454,strictly_longest
 17201,Winnebago County,IL,doc_b4d24c68e329364d5365676d,Loves Park,city,1180,strictly_longest
 17203,Woodford County,IL,doc_7349df6b05eb5c0c31454d19,Eureka,city,924,strictly_longest
 18001,Adams County,IN,doc_33ba041a04ec8d812165566f,Decatur,city,389,strictly_longest
@@ -730,7 +730,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 18059,Hancock County,IN,doc_2225f4e9f8237c378441a4a0,Hancock,county,412,strictly_longest
 18061,Harrison County,IN,,,,,no_mapped_document
 18063,Hendricks County,IN,doc_909c59c8e9d9d9f488afb3de,Brownsburg,city,300,strictly_longest
-18065,Henry County,IN,doc_40f4f19e536e313de929b32f,New Castle,city,347,strictly_longest
+18065,Henry County,IN,doc_40f4f19e536e313de929b32f,New Castle,city,347,only_eligible_document
 18067,Howard County,IN,doc_2727122cd8815715f27fd8b8,Kokomo,city,528,strictly_longest
 18069,Huntington County,IN,doc_f6fb9f6e6b346f63be1be029,Huntington,city,410,strictly_longest
 18071,Jackson County,IN,doc_d58d2a84f6ec054edc58c523,Seymour,city,427,strictly_longest
@@ -805,7 +805,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 19025,Calhoun County,IA,,,,,no_mapped_document
 19027,Carroll County,IA,doc_549191873d2551e08f522efd,Carroll,city,289,only_eligible_document
 19029,Cass County,IA,,,,,no_mapped_document
-19031,Cedar County,IA,doc_ec3d896868f5b3d0473506a0,Wilton,city,674,strictly_longest
+19031,Cedar County,IA,doc_835eda1b8b7d97ac5fea07e7,West Branch,city,215,strictly_longest
 19033,Cerro Gordo County,IA,doc_064d048039c71a1efbf6e547,Clear Lake,city,293,strictly_longest
 19035,Cherokee County,IA,doc_06a8137b411feb075d1335aa,Aurelia,city,180,strictly_longest
 19037,Chickasaw County,IA,doc_41f24b387b29245e50252c91,Fredericksburg,city,182,only_eligible_document
@@ -844,13 +844,13 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 19103,Johnson County,IA,doc_e3a37b36c50b1603cad7d8f4,Iowa City,city,536,strictly_longest
 19105,Jones County,IA,doc_01b62f382459c5ad39665558,Monticello,city,235,strictly_longest
 19107,Keokuk County,IA,,,,,no_mapped_document
-19109,Kossuth County,IA,doc_87e704c44b92f0ace1d22a9c,Algona,city,657,strictly_longest
+19109,Kossuth County,IA,doc_87e704c44b92f0ace1d22a9c,Algona,city,657,only_eligible_document
 19111,Lee County,IA,doc_ae4feb93e9ecb6914ba6402a,Keokuk,city,794,strictly_longest
 19113,Linn County,IA,doc_54b43e85f0da8ee4baa28025,Cedar Rapids,city,1050,strictly_longest
 19115,Louisa County,IA,,,,,no_mapped_document
 19117,Lucas County,IA,doc_51f24a6f07d850574b71979c,Russell,city,124,only_eligible_document
 19119,Lyon County,IA,,,,,no_mapped_document
-19121,Madison County,IA,doc_e74ca67f8fd6e0f629fe2432,West Des Moines,city,349,strictly_longest
+19121,Madison County,IA,doc_dd30cb6533ab60f257c99b63,Earlham,city,186,only_eligible_document
 19123,Mahaska County,IA,doc_32fb45fd0ab761417380fc6a,Oskaloosa,city,1280,strictly_longest
 19125,Marion County,IA,doc_6498cd9ef550ab1d772d3d48,Pella,city,368,strictly_longest
 19127,Marshall County,IA,doc_e65513dbc13f05acc5070682,Marshalltown,city,394,only_eligible_document
@@ -873,14 +873,14 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 19161,Sac County,IA,doc_e4284f823339c918e6daa295,Sac City,city,173,only_eligible_document
 19163,Scott County,IA,doc_456f2ebfaf6c65ffd93b20fd,Davenport,city,1441,strictly_longest
 19165,Shelby County,IA,,,,,no_mapped_document
-19167,Sioux County,IA,doc_028a66d5001e19e4f1066e5a,Sheldon,city,248,strictly_longest
+19167,Sioux County,IA,doc_3f0ae59d7adf2a185602f681,Orange City,city,230,only_eligible_document
 19169,Story County,IA,doc_65801fb42c75960d0bedf9d7,Story City,city,234,strictly_longest
 19171,Tama County,IA,doc_e0c1e847112508a13dd35b2d,Dysart,city,578,strictly_longest
 19173,Taylor County,IA,doc_74dcb2b4efb70869129c1b29,Bedford,city,150,only_eligible_document
 19175,Union County,IA,doc_7d7b8a2168c734852ad53f78,Creston,city,172,only_eligible_document
 19177,Van Buren County,IA,,,,,no_mapped_document
 19179,Wapello County,IA,doc_8bfd6d326647858136f2f9a3,Ottumwa,city,950,only_eligible_document
-19181,Warren County,IA,doc_ea400c2cd49ff0399788e027,Des Moines,city,2588,strictly_longest
+19181,Warren County,IA,doc_73de4462db166b895c5277ca,Indianola,city,352,strictly_longest
 19183,Washington County,IA,doc_aed0ee0c2e871f80cde762ef,Washington,city,228,strictly_longest
 19185,Wayne County,IA,doc_bd8dd0224408efd5bf7e69da,Corydon,city,369,only_eligible_document
 19187,Webster County,IA,doc_30266d55a126e5b901cc900d,Fort Dodge,city,962,only_eligible_document
@@ -952,7 +952,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 20121,Miami County,KS,doc_341ac149620980094db4f450,Miami,county,591,only_eligible_document
 20123,Mitchell County,KS,,,,,no_mapped_document
 20125,Montgomery County,KS,doc_a417a6914cff7b8bd890155b,Independence,city,1210,strictly_longest
-20127,Morris County,KS,doc_94a49a808268b7ffc96f9491,Herington,city,412,only_eligible_document
+20127,Morris County,KS,,,,,no_eligible_document_after_population_screen
 20129,Morton County,KS,,,,,no_mapped_document
 20131,Nemaha County,KS,doc_18db795590e9f7cccf619d1e,Seneca,city,799,only_eligible_document
 20133,Neosho County,KS,doc_0d87f6e731b5955c7d0a9ef6,Chanute,city,677,only_eligible_document
@@ -963,7 +963,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 20143,Ottawa County,KS,,,,,no_mapped_document
 20145,Pawnee County,KS,doc_871e62ab132d8e02ac0ca5d0,Larned,city,510,only_eligible_document
 20147,Phillips County,KS,,,,,no_mapped_document
-20149,Pottawatomie County,KS,doc_2c503e1055c1775e73abd6d3,Manhattan,city,1140,strictly_longest
+20149,Pottawatomie County,KS,doc_dc07964e66898994cf9f09b3,St. George,city,420,strictly_longest
 20151,Pratt County,KS,doc_0306bd0521582e81ad0f0851,Pratt,city,450,only_eligible_document
 20153,Rawlins County,KS,doc_9c13a13f7b71045bccf636d3,Atwood,city,594,only_eligible_document
 20155,Reno County,KS,doc_7fa9f23f040c7ffa697de41d,Nickerson,city,350,only_eligible_document
@@ -987,7 +987,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 20191,Sumner County,KS,doc_ba0a1e68f2007bf81a470e75,Wellington,city,1080,strictly_longest
 20193,Thomas County,KS,,,,,no_mapped_document
 20195,Trego County,KS,,,,,no_mapped_document
-20197,Wabaunsee County,KS,doc_d3e602efb26490bc7d8b653e,Wamego,city,280,strictly_longest
+20197,Wabaunsee County,KS,doc_90fb49f2fc62cdbf054f764d,Alma,city,148,only_eligible_document
 20199,Wallace County,KS,,,,,no_mapped_document
 20201,Washington County,KS,,,,,no_mapped_document
 20203,Wichita County,KS,doc_823dd289562ca4eee49f7981,Leoti,city,572,only_eligible_document
@@ -1010,7 +1010,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 21027,Breckinridge County,KY,doc_8feba8f624b87b2a55b847e9,Cloverport,city,199,only_eligible_document
 21029,Bullitt County,KY,doc_0d097ddc4499e8e5c8317a55,Mount Washington,city,358,strictly_longest
 21031,Butler County,KY,doc_6862a561d06c714492cd462e,Morgantown,city,242,only_eligible_document
-21033,Caldwell County,KY,doc_06888bd2bf292e08cf89f3c7,Dawson Springs,city,209,only_eligible_document
+21033,Caldwell County,KY,,,,,no_eligible_document_after_population_screen
 21035,Calloway County,KY,doc_df93a46e38902530b0e018df,Murray,city,385,only_eligible_document
 21037,Campbell County,KY,doc_15a03df49835fbdd225e77e0,Dayton,city,438,strictly_longest
 21039,Carlisle County,KY,,,,,no_mapped_document
@@ -1163,7 +1163,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 22093,St. James Parish,LA,doc_d8e8de3e52093b1095256a90,St. James,county,810,strictly_longest
 22095,St. John the Baptist Parish,LA,doc_be7d5874e3857f95d89554e0,St. John the Baptist,county,1150,only_eligible_document
 22097,St. Landry Parish,LA,doc_9ccd7cea7043ef373565f85b,St. Landry,county,978,strictly_longest
-22099,St. Martin Parish,LA,doc_31ff6ce66331b2c578edb37c,Morgan City,city,918,strictly_longest
+22099,St. Martin Parish,LA,doc_5438c09ca2bf781c7c6cc2cc,St. Martin,county,814,strictly_longest
 22101,St. Mary Parish,LA,doc_31ff6ce66331b2c578edb37c,Morgan City,city,918,strictly_longest
 22103,St. Tammany Parish,LA,doc_64fcddb15a7851bf5a5784ae,St. Tammany,county,2394,strictly_longest
 22105,Tangipahoa Parish,LA,doc_5f170747101da3f7923b7120,Hammond,city,1168,strictly_longest
@@ -1245,12 +1245,12 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 26021,Berrien County,MI,doc_c4fa37280bc5a3f13b4a8a42,St. Joseph,city,854,strictly_longest
 26023,Branch County,MI,doc_d74b316df35c6bb595d2c442,Coldwater,city,566,strictly_longest
 26025,Calhoun County,MI,doc_f2d39e7b871c7dff31c84d13,Albion,city,928,strictly_longest
-26027,Cass County,MI,doc_b62d6c8fcbad29ebffa9971a,Niles,city,746,strictly_longest
+26027,Cass County,MI,doc_53a35826db2e4690420ff73e,Silver Creek,city,129,only_eligible_document
 26029,Charlevoix County,MI,doc_3eec6caa22b56fe3c8603441,East Jordan,city,700,strictly_longest
 26031,Cheboygan County,MI,doc_6d4a3ae95664efe9188f88c4,Cheboygan,city,262,strictly_longest
 26033,Chippewa County,MI,doc_0ce7b05d765930a5a8a0f5aa,Sault Ste. Marie,city,1330,only_eligible_document
 26035,Clare County,MI,doc_660e7c169f54e9e00698b877,Clare,city,992,only_eligible_document
-26037,Clinton County,MI,doc_e4dae67091a792a769edfa58,Lansing,city,1388,strictly_longest
+26037,Clinton County,MI,doc_a61252a4be9ba53874941516,East Lansing,city,1102,strictly_longest
 26039,Crawford County,MI,,,,,no_mapped_document
 26041,Delta County,MI,doc_a31d36a61f6813b9b115c78b,Escanaba,city,1150,strictly_longest
 26043,Dickinson County,MI,doc_bd9e2439325e9ad582f488c4,Iron Mountain,city,948,strictly_longest
@@ -1268,7 +1268,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 26067,Ionia County,MI,doc_6415d7265bba3fef5b6c8464,Belding,city,1026,strictly_longest
 26069,Iosco County,MI,doc_b036c2b5c6db340a35282d24,Tawas City,city,414,strictly_longest
 26071,Iron County,MI,doc_45da363d0014833a06971e4b,Iron River,city,540,only_eligible_document
-26073,Isabella County,MI,doc_660e7c169f54e9e00698b877,Clare,city,992,strictly_longest
+26073,Isabella County,MI,doc_9afcc880943a34d73db4772e,Mount Pleasant,city,299,only_eligible_document
 26075,Jackson County,MI,doc_3e5c6f2b1a473c1b30b8e840,Jackson,city,1216,strictly_longest
 26077,Kalamazoo County,MI,doc_9998eb5eff00cbc83cc4c7fa,Kalamazoo,city,1397,strictly_longest
 26079,Kalkaska County,MI,,,,,no_mapped_document
@@ -1278,7 +1278,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 26087,Lapeer County,MI,doc_cc10db6450327a439b6bd790,Lapeer,city,731,strictly_longest
 26089,Leelanau County,MI,doc_843fccf349dd476d26d4899b,Traverse City,city,1988,only_eligible_document
 26091,Lenawee County,MI,doc_38ac266f76f21a065c1ca24e,Tecumseh,city,898,strictly_longest
-26093,Livingston County,MI,doc_7c7f9d02245f6c2dc9e77884,Fenton,city,1070,strictly_longest
+26093,Livingston County,MI,doc_ec4e4eb5149aee21ec173567,Fowlerville,city,910,strictly_longest
 26095,Luce County,MI,doc_499a916e96b8443fd0f8eb83,Newberry,city,196,only_eligible_document
 26097,Mackinac County,MI,doc_fa782e248329e405fb9a86a2,Mackinac Island,city,820,strictly_longest
 26099,Macomb County,MI,doc_8ade6be91b8797fd761a41b1,Warren,city,1576,strictly_longest
@@ -1305,7 +1305,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 26141,Presque Isle County,MI,,,,,no_mapped_document
 26143,Roscommon County,MI,,,,,no_mapped_document
 26145,Saginaw County,MI,doc_743c0bbb4b80c7d1eac7525e,Thomas,city,1038,strictly_longest
-26147,St. Clair County,MI,doc_53f449e9c91232640c22c08e,Richmond,city,1164,strictly_longest
+26147,St. Clair County,MI,doc_370585a89c3f22f361d0e19f,St. Clair,city,1132,strictly_longest
 26149,St. Joseph County,MI,doc_c27e21ac29dd1ad19bfb1911,Sturgis,city,970,strictly_longest
 26151,Sanilac County,MI,doc_b9af62a2a31960e0e8108f9c,Deckerville,city,370,strictly_longest
 26153,Schoolcraft County,MI,doc_f0474777985fc087f338d518,Manistique,city,690,only_eligible_document
@@ -1347,14 +1347,14 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 27059,Isanti County,MN,doc_c394c53620e980da89aad0c0,Isanti,city,761,strictly_longest
 27061,Itasca County,MN,doc_78192477dccae5c2500ad87d,Deer River,city,312,only_eligible_document
 27063,Jackson County,MN,doc_25048337c33df6aa9b7d0966,Jackson,city,283,only_eligible_document
-27065,Kanabec County,MN,doc_a7c87d17a20f8a471bea3a9a,Mora,city,314,strictly_longest
+27065,Kanabec County,MN,doc_a7c87d17a20f8a471bea3a9a,Mora,city,314,only_eligible_document
 27067,Kandiyohi County,MN,doc_bfd8cecfe0de913a67235688,Willmar,city,652,strictly_longest
 27069,Kittson County,MN,,,,,no_mapped_document
 27071,Koochiching County,MN,doc_49b606e5bb146250fce8198b,International Falls,city,462,strictly_longest
 27073,Lac qui Parle County,MN,doc_7217baaa91d74bba49d09dff,Madison,city,206,strictly_longest
 27075,Lake County,MN,doc_133401926327681c31f22028,Two Harbors,city,168,only_eligible_document
 27077,Lake of the Woods County,MN,doc_03510b78ff2cb22cf1da6f89,Baudette,city,194,only_eligible_document
-27079,Le Sueur County,MN,doc_c7ed3849617615a54b6d4d24,Mankato,city,888,strictly_longest
+27079,Le Sueur County,MN,doc_bfe215505879a31e38af0940,Le Sueur,city,341,strictly_longest
 27081,Lincoln County,MN,,,,,no_mapped_document
 27083,Lyon County,MN,doc_f70e5e73f9c05e6addca5ff0,Cottonwood,city,242,only_eligible_document
 27085,McLeod County,MN,doc_cff14b36dac280f6e8f3bce6,Hutchinson,city,480,only_eligible_document
@@ -1366,7 +1366,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 27097,Morrison County,MN,doc_0e27068ae7280bbeaa1c30df,Little Falls,city,247,only_eligible_document
 27099,Mower County,MN,doc_74ed29ab9795b836ad09c757,Austin,city,332,only_eligible_document
 27101,Murray County,MN,doc_5e95f473b6bc9c0a6bbc916a,Slayton,city,203,only_eligible_document
-27103,Nicollet County,MN,doc_98931df159072135ee20b057,St. Peter,city,888,tie_broken_by_document_id
+27103,Nicollet County,MN,doc_98931df159072135ee20b057,St. Peter,city,888,strictly_longest
 27105,Nobles County,MN,doc_bc1061540f61a2d2c3d0acfc,Worthington,city,264,only_eligible_document
 27107,Norman County,MN,doc_da48ca063fb26e0f220be0ea,Ada,city,498,only_eligible_document
 27109,Olmsted County,MN,doc_f27eafd021f099a37c87ea2b,Rochester,city,910,strictly_longest
@@ -1386,12 +1386,12 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 27137,St. Louis County,MN,doc_684de9666e06d9ac1e3fc12b,Virginia,city,251,strictly_longest
 27139,Scott County,MN,doc_2f0465912f7e1ca740caa194,Prior Lake,city,788,strictly_longest
 27141,Sherburne County,MN,doc_be748ccc8343f2808dbe4c83,St. Cloud,city,1120,strictly_longest
-27143,Sibley County,MN,doc_bfe215505879a31e38af0940,Le Sueur,city,341,strictly_longest
+27143,Sibley County,MN,doc_b5f121f31f054cbdc11f88f8,Gaylord,city,266,strictly_longest
 27145,Stearns County,MN,doc_be748ccc8343f2808dbe4c83,St. Cloud,city,1120,strictly_longest
 27147,Steele County,MN,doc_574bab3fbd067e9bb962128c,Owatonna,city,238,only_eligible_document
 27149,Stevens County,MN,,,,,no_mapped_document
 27151,Swift County,MN,doc_281beaadcdc14755f103364d,Benson,city,300,only_eligible_document
-27153,Todd County,MN,doc_1f6b59284472aed84c8cddaf,Staples,city,618,strictly_longest
+27153,Todd County,MN,doc_1f6b59284472aed84c8cddaf,Staples,city,618,only_eligible_document
 27155,Traverse County,MN,,,,,no_mapped_document
 27157,Wabasha County,MN,doc_d5fc817bb1514ddb7e1f6b32,Wabasha,city,164,only_eligible_document
 27159,Wadena County,MN,doc_1f6b59284472aed84c8cddaf,Staples,city,618,strictly_longest
@@ -1446,7 +1446,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 28083,Leflore County,MS,doc_4207038814cfb7a07a785498,Greenwood,city,712,only_eligible_document
 28085,Lincoln County,MS,,,,,no_mapped_document
 28087,Lowndes County,MS,doc_88b768fdb48c07ab26435b01,Columbus,city,1054,only_eligible_document
-28089,Madison County,MS,doc_8f21200d5d2689400b9366ec,Jackson,city,988,strictly_longest
+28089,Madison County,MS,doc_07f907af4bcaa6007af97793,Ridgeland,city,454,strictly_longest
 28091,Marion County,MS,,,,,no_mapped_document
 28093,Marshall County,MS,,,,,no_mapped_document
 28095,Monroe County,MS,,,,,no_mapped_document
@@ -1462,7 +1462,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 28115,Pontotoc County,MS,,,,,no_mapped_document
 28117,Prentiss County,MS,,,,,no_mapped_document
 28119,Quitman County,MS,,,,,no_mapped_document
-28121,Rankin County,MS,doc_8f21200d5d2689400b9366ec,Jackson,city,988,strictly_longest
+28121,Rankin County,MS,doc_13282af20d4b8d172ab4340b,Brandon,city,804,strictly_longest
 28123,Scott County,MS,,,,,no_mapped_document
 28125,Sharkey County,MS,,,,,no_mapped_document
 28127,Simpson County,MS,,,,,no_mapped_document
@@ -1496,8 +1496,8 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 29019,Boone County,MO,doc_2b6e89419767b2b7bd6b9997,Columbia,city,2606,strictly_longest
 29021,Buchanan County,MO,doc_42955a3bafa9b373ce547ba7,St. Joseph,city,1932,only_eligible_document
 29023,Butler County,MO,doc_59e8c39c987335c79dde729e,Poplar Bluff,city,889,only_eligible_document
-29025,Caldwell County,MO,doc_100e00df76ef299a42624b4f,Hamilton,city,652,strictly_longest
-29027,Callaway County,MO,doc_455283e50d1a6a72ae2d4bfa,Jefferson City,city,1680,strictly_longest
+29025,Caldwell County,MO,doc_100e00df76ef299a42624b4f,Hamilton,city,652,only_eligible_document
+29027,Callaway County,MO,doc_03b4af2b939cf23132c79a36,Holts Summit,city,924,strictly_longest
 29029,Camden County,MO,doc_87b509332cddb4ecf4c1609b,Osage Beach,city,955,strictly_longest
 29031,Cape Girardeau County,MO,doc_01fb7adef11ab25000bdcda6,Cape Girardeau,city,1006,strictly_longest
 29033,Carroll County,MO,,,,,no_mapped_document
@@ -1505,9 +1505,9 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 29037,Cass County,MO,doc_eaa0fe72629824b535ae117b,Lee's Summit,city,1492,strictly_longest
 29039,Cedar County,MO,doc_3c7b9fd7a645f2e877c2fc3f,El Dorado Springs,city,562,only_eligible_document
 29041,Chariton County,MO,,,,,no_mapped_document
-29043,Christian County,MO,doc_90e3e12a95f1ded551ce531d,Springfield,city,1300,strictly_longest
+29043,Christian County,MO,doc_e39ec2633bbc488b6d405f2b,Nixa,city,1102,strictly_longest
 29045,Clark County,MO,,,,,no_mapped_document
-29047,Clay County,MO,doc_302681ec376e4de27f1d5002,Independence,city,1534,strictly_longest
+29047,Clay County,MO,doc_f46a49bd7241db1d824a7547,North Kansas City,city,1160,strictly_longest
 29049,Clinton County,MO,doc_199e37010792e24293259590,Cameron,city,610,only_eligible_document
 29051,Cole County,MO,doc_455283e50d1a6a72ae2d4bfa,Jefferson City,city,1680,strictly_longest
 29053,Cooper County,MO,doc_cd831aad2bd17f0617cfdb45,Boonville,city,722,strictly_longest
@@ -1550,11 +1550,11 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 29127,Marion County,MO,doc_b66ed5fd5c08cc6f97769bd7,Hannibal,city,1066,strictly_longest
 29129,Mercer County,MO,,,,,no_mapped_document
 29131,Miller County,MO,doc_87b509332cddb4ecf4c1609b,Osage Beach,city,955,only_eligible_document
-29133,Mississippi County,MO,doc_d30b31ce470cb744de110031,Miner,city,492,only_eligible_document
+29133,Mississippi County,MO,,,,,no_eligible_document_after_population_screen
 29135,Moniteau County,MO,doc_c2185724e24b120f4681858a,Jamestown,city,214,only_eligible_document
 29137,Monroe County,MO,doc_2ddb143bc3454708924ccb3b,Monroe City,city,600,only_eligible_document
 29139,Montgomery County,MO,doc_f889c793354d44ff44abe988,Montgomery City,city,824,only_eligible_document
-29141,Morgan County,MO,doc_a8b48ad2eed6cfc6677ed642,Sunrise Beach,city,416,only_eligible_document
+29141,Morgan County,MO,,,,,no_eligible_document_after_population_screen
 29143,New Madrid County,MO,doc_13216c995c7f7f262d4e121b,New Madrid,city,790,strictly_longest
 29145,Newton County,MO,doc_7a2a4d5ec90187fa5caeef2f,Joplin,city,1338,strictly_longest
 29147,Nodaway County,MO,doc_57a2c643fa67db4ec843c723,Maryville,city,918,only_eligible_document
@@ -1572,7 +1572,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 29171,Putnam County,MO,,,,,no_mapped_document
 29173,Ralls County,MO,doc_b66ed5fd5c08cc6f97769bd7,Hannibal,city,1066,strictly_longest
 29175,Randolph County,MO,doc_27df101d1f2b517dd8232655,Moberly,city,946,only_eligible_document
-29177,Ray County,MO,doc_f82e4166ecfd1c30b9fa5970,Excelsior Springs,city,882,strictly_longest
+29177,Ray County,MO,doc_151cfb14f3fe3d41fa8a718f,Richmond,city,828,strictly_longest
 29179,Reynolds County,MO,,,,,no_mapped_document
 29181,Ripley County,MO,doc_ac5e0694841d2f10b481e1e1,Doniphan,city,732,only_eligible_document
 29183,St. Charles County,MO,doc_3bdbe1005ac5ba198d4057cd,Wentzville,city,1526,strictly_longest
@@ -1583,11 +1583,11 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 29195,Saline County,MO,doc_7efec96080e8145ca45a684d,Marshall,city,691,only_eligible_document
 29197,Schuyler County,MO,,,,,no_mapped_document
 29199,Scotland County,MO,,,,,no_mapped_document
-29201,Scott County,MO,doc_01fb7adef11ab25000bdcda6,Cape Girardeau,city,1006,strictly_longest
+29201,Scott County,MO,doc_d30b31ce470cb744de110031,Miner,city,492,only_eligible_document
 29203,Shannon County,MO,,,,,no_mapped_document
 29205,Shelby County,MO,,,,,no_mapped_document
 29207,Stoddard County,MO,doc_a0b47376acf2ee2681348e13,Dexter,city,588,only_eligible_document
-29209,Stone County,MO,doc_c3769d4e663ad3947e5aeaab,Branson,city,1114,strictly_longest
+29209,Stone County,MO,doc_e049b682fd78e7ad0fbecaf3,Reeds Spring,city,659,strictly_longest
 29211,Sullivan County,MO,,,,,no_mapped_document
 29213,Taney County,MO,doc_c3769d4e663ad3947e5aeaab,Branson,city,1114,only_eligible_document
 29215,Texas County,MO,doc_5542747e034ac815d049b9f3,Houston,city,756,strictly_longest
@@ -1595,7 +1595,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 29219,Warren County,MO,doc_4e406d34cad392b228f2b93a,Warrenton,city,831,only_eligible_document
 29221,Washington County,MO,,,,,no_mapped_document
 29223,Wayne County,MO,,,,,no_mapped_document
-29225,Webster County,MO,doc_03e424187952d815f478be95,Marshfield,city,754,strictly_longest
+29225,Webster County,MO,doc_03e424187952d815f478be95,Marshfield,city,754,only_eligible_document
 29227,Worth County,MO,,,,,no_mapped_document
 29229,Wright County,MO,doc_1cfdddec7a91d10db96bc00f,Mountain Grove,city,548,strictly_longest
 29510,St. Louis city,MO,doc_fcc0d7837ee2d79d2905ed54,St. Louis,city,3424,only_eligible_document
@@ -1724,8 +1724,8 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 31133,Pawnee County,NE,,,,,no_mapped_document
 31135,Perkins County,NE,,,,,no_mapped_document
 31137,Phelps County,NE,doc_f2353c285b3e5d689c61aa49,Holdrege,city,298,strictly_longest
-31139,Pierce County,NE,doc_7f32c2c232f463970d058079,Randolph,city,253,strictly_longest
-31141,Platte County,NE,doc_2a8386270e20e166e3e22589,Columbus,city,294,strictly_longest
+31139,Pierce County,NE,doc_8e68474b581e0a8def103cb3,Plainview,city,166,only_eligible_document
+31141,Platte County,NE,doc_2a8386270e20e166e3e22589,Columbus,city,294,only_eligible_document
 31143,Polk County,NE,doc_f1af2ccdb477d8d4add443b0,Shelby,city,152,only_eligible_document
 31145,Red Willow County,NE,doc_32e6a72ea2b98b6bd5b97432,McCook,city,254,only_eligible_document
 31147,Richardson County,NE,doc_7eed6ab3be8f6ff2471b39b0,Humboldt,city,215,only_eligible_document
@@ -1796,7 +1796,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 34037,Sussex County,NJ,doc_bbaf93d222aab76721cf1bb8,Byram,city,1152,strictly_longest
 34039,Union County,NJ,doc_c039bbb9f3b9e9acdb2322ec,Rahway,city,1611,strictly_longest
 34041,Warren County,NJ,doc_3952d7b149539b3df7627bce,Phillipsburg,city,922,strictly_longest
-35001,Bernalillo County,NM,doc_e0d43958e80cb2ecdd5f1676,Rio Rancho,city,1420,strictly_longest
+35001,Bernalillo County,NM,doc_6eb113b44a60cc7753da5279,Bernalillo,county,1398,strictly_longest
 35003,Catron County,NM,,,,,no_mapped_document
 35005,Chaves County,NM,doc_74d1e383738d9e160fc75e13,Roswell,city,1006,only_eligible_document
 35006,Cibola County,NM,,,,,no_mapped_document
@@ -1878,7 +1878,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 36093,Schenectady County,NY,doc_9d62d30946ba1dd6f73f002a,Schenectady,city,1122,strictly_longest
 36095,Schoharie County,NY,,,,,no_mapped_document
 36097,Schuyler County,NY,doc_12edce65295b098df42241dd,Montour,city,190,only_eligible_document
-36099,Seneca County,NY,doc_b66dacf291a4efae579db594,Geneva,city,887,strictly_longest
+36099,Seneca County,NY,doc_c9c48c3100f06613544ab363,Seneca Falls,city,472,strictly_longest
 36101,Steuben County,NY,doc_72fb0c0cb6829574c6b7fe99,Hornell,city,654,strictly_longest
 36103,Suffolk County,NY,doc_8acac3c378c449b8696ba747,Suffolk,county,4582,strictly_longest
 36105,Sullivan County,NY,doc_24b6dacd975220e01a45c6a8,Fallsburg,city,662,strictly_longest
@@ -1904,12 +1904,12 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 37021,Buncombe County,NC,doc_9a82301b546024c92e9b2a38,Black Mountain,city,774,strictly_longest
 37023,Burke County,NC,doc_86cf50acfc8ac354b1b8a32b,Morganton,city,1022,strictly_longest
 37025,Cabarrus County,NC,doc_d73ccbe6cd61585579017327,Concord,city,694,strictly_longest
-37027,Caldwell County,NC,doc_1da39979a60e07bb1bc945a3,Lenoir,city,650,strictly_longest
-37029,Camden County,NC,doc_5793be15a30a559b87054ef3,Elizabeth City,city,238,strictly_longest
+37027,Caldwell County,NC,doc_1da39979a60e07bb1bc945a3,Lenoir,city,650,only_eligible_document
+37029,Camden County,NC,doc_3fbe1b1ef9a116357428dec6,Camden,county,187,only_eligible_document
 37031,Carteret County,NC,doc_494354e26409143c44399bd0,Morehead City,city,1152,strictly_longest
 37033,Caswell County,NC,doc_6ef6a532336f004d08b62038,Caswell,county,394,only_eligible_document
 37035,Catawba County,NC,doc_e2f994504a3e1c59cea8958e,Newton,city,1160,strictly_longest
-37037,Chatham County,NC,doc_b090eee8ea52eea60b7e9570,Apex,city,448,strictly_longest
+37037,Chatham County,NC,doc_6c0fc37eed981cd340950660,Cary,city,444,strictly_longest
 37039,Cherokee County,NC,doc_3dfc0aa92051bf1675252f4e,Murphy,city,293,only_eligible_document
 37041,Chowan County,NC,doc_34ecee6730b34487c2abcee9,Edenton,city,174,only_eligible_document
 37043,Clay County,NC,,,,,no_mapped_document
@@ -1921,7 +1921,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 37055,Dare County,NC,doc_eb355d53048a0e1f4cc08c1a,Kitty Hawk,city,1076,strictly_longest
 37057,Davidson County,NC,doc_2c10320d31f35cceda63a3d8,Thomasville,city,932,strictly_longest
 37059,Davie County,NC,doc_1d973d16948747ec4e5b0df9,Davie,county,366,strictly_longest
-37061,Duplin County,NC,doc_8ac6087ce9e91bb83677480d,Mount Olive,city,596,strictly_longest
+37061,Duplin County,NC,doc_b9c94c7e843999d05c2171d3,Faison,city,334,strictly_longest
 37063,Durham County,NC,doc_374db3cefdc0cded50008416,Durham,city,1442,strictly_longest
 37065,Edgecombe County,NC,doc_70dcdf59f8b8c5036ce36e68,Rocky Mount,city,1194,strictly_longest
 37067,Forsyth County,NC,doc_207e4e120cf21726ca50e838,Winston-Salem,city,1148,strictly_longest
@@ -1933,7 +1933,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 37079,Greene County,NC,doc_6df227e6cbe462baa490814b,Greene,county,257,only_eligible_document
 37081,Guilford County,NC,doc_a3f3b18ca5b834fa1319cee6,Greensboro,city,896,strictly_longest
 37083,Halifax County,NC,doc_5fe9b36ea27f55eec29983f1,Halifax,county,782,strictly_longest
-37085,Harnett County,NC,doc_1e49bdc8f65ce8b60a40776b,Fuquay-Varina,city,1462,strictly_longest
+37085,Harnett County,NC,doc_abf88e7735a7f3b80ee9574d,Erwin,city,712,strictly_longest
 37087,Haywood County,NC,doc_3812a1f5675f30bb723377e6,Waynesville,city,866,strictly_longest
 37089,Henderson County,NC,doc_e961aaed71afa356ea54da77,Hendersonville,city,1376,strictly_longest
 37091,Hertford County,NC,doc_09d5e884ca12fb99685e4b1d,Ahoskie,city,636,strictly_longest
@@ -1958,7 +1958,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 37129,New Hanover County,NC,doc_55aeb334949ef2ebab9b7fcf,Wilmington,city,1430,strictly_longest
 37131,Northampton County,NC,doc_fe3b9cf5e89007a8ebc2d014,Conway,city,114,only_eligible_document
 37133,Onslow County,NC,doc_34aecefef73dcef658eb566a,Jacksonville,city,522,strictly_longest
-37135,Orange County,NC,doc_374db3cefdc0cded50008416,Durham,city,1442,strictly_longest
+37135,Orange County,NC,doc_0a0dac376eef53f7c520a6d9,Chapel Hill,city,1376,strictly_longest
 37137,Pamlico County,NC,doc_a436cd8c167aaca68f8b4fb2,Minnesott Beach,city,143,only_eligible_document
 37139,Pasquotank County,NC,doc_5793be15a30a559b87054ef3,Elizabeth City,city,238,strictly_longest
 37141,Pender County,NC,doc_fd49d690504d8b85ec3df81b,Topsail Beach,city,818,strictly_longest
@@ -1966,13 +1966,13 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 37145,Person County,NC,doc_ff8de7aa4e1ad01bf29ecc94,Roxboro,city,231,only_eligible_document
 37147,Pitt County,NC,doc_8de7157d332e5943a8c257a3,Greenville,city,323,strictly_longest
 37149,Polk County,NC,doc_d77f0f0578ce791261f978dd,Columbus,city,290,only_eligible_document
-37151,Randolph County,NC,doc_2c10320d31f35cceda63a3d8,Thomasville,city,932,strictly_longest
+37151,Randolph County,NC,doc_c3caed354c0957fef001fcf8,Liberty,city,367,strictly_longest
 37153,Richmond County,NC,doc_a30e4907830de59e3af6279d,Hamlet,city,224,strictly_longest
 37155,Robeson County,NC,doc_eeea4437279fbe091a3e7fdc,Lumberton,city,1000,strictly_longest
 37157,Rockingham County,NC,doc_f4fbee692e90b2c82923981a,Rockingham,county,386,strictly_longest
 37159,Rowan County,NC,doc_36dde262559a53641fd74304,Rowan,county,962,strictly_longest
 37161,Rutherford County,NC,doc_4adb384d3c1cea28f1692e1d,Rutherfordton,city,802,strictly_longest
-37163,Sampson County,NC,doc_b9c94c7e843999d05c2171d3,Faison,city,334,only_eligible_document
+37163,Sampson County,NC,,,,,no_eligible_document_after_population_screen
 37165,Scotland County,NC,doc_0eb47f6c1c1a59259f087ad9,Laurinburg,city,406,only_eligible_document
 37167,Stanly County,NC,doc_3b754243bfe3a66b783d7260,Oakboro,city,389,strictly_longest
 37169,Stokes County,NC,doc_b770ac515525faeb02b0b39e,King,city,592,strictly_longest
@@ -1980,7 +1980,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 37173,Swain County,NC,doc_f7c5fa3af5667720f11c48a8,Bryson City,city,110,only_eligible_document
 37175,Transylvania County,NC,,,,,no_mapped_document
 37177,Tyrrell County,NC,,,,,no_mapped_document
-37179,Union County,NC,doc_6d30ed9ac1fac24ace5590a8,Mint Hill,city,894,strictly_longest
+37179,Union County,NC,doc_a67a1efb78be3439509012d9,Wesley Chapel,city,624,strictly_longest
 37181,Vance County,NC,doc_f8ed4a30e7e3e1d114b553f2,Henderson,city,696,strictly_longest
 37183,Wake County,NC,doc_1e49bdc8f65ce8b60a40776b,Fuquay-Varina,city,1462,strictly_longest
 37185,Warren County,NC,doc_994dd3afc5a2044d3244a061,Warren,county,230,only_eligible_document
@@ -1988,7 +1988,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 37189,Watauga County,NC,doc_371086f0d0b2f47646f4a000,Boone,city,286,strictly_longest
 37191,Wayne County,NC,doc_06e45ffe6c2ad6d1bdbb44bc,Wayne,county,648,strictly_longest
 37193,Wilkes County,NC,doc_02b6fb61c4dc4f9bd0a66f80,North Wilkesboro,city,306,strictly_longest
-37195,Wilson County,NC,doc_ba02ee02a65756dd6e2db354,Wilson,city,748,strictly_longest
+37195,Wilson County,NC,doc_ba02ee02a65756dd6e2db354,Wilson,city,748,only_eligible_document
 37197,Yadkin County,NC,doc_d5519103c0bbfbac7bd82092,Yadkin,county,580,strictly_longest
 37199,Yancey County,NC,,,,,no_mapped_document
 38001,Adams County,ND,,,,,no_mapped_document
@@ -2072,7 +2072,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 39051,Fulton County,OH,doc_3062308be49db610c69ab9b3,Wauseon,city,466,strictly_longest
 39053,Gallia County,OH,doc_96b21ba9c3378f688f79d3bb,Gallipolis,city,429,only_eligible_document
 39055,Geauga County,OH,doc_a78b105f4a399e4262eac82f,Chardon,city,627,strictly_longest
-39057,Greene County,OH,doc_c250a8d46dd463065e63bc74,Dayton,city,1724,strictly_longest
+39057,Greene County,OH,doc_cf0ebb20e0ef719583e26525,Xenia,city,730,strictly_longest
 39059,Guernsey County,OH,doc_70692beb4fca388343fd63d8,Cambridge,city,461,strictly_longest
 39061,Hamilton County,OH,doc_425290c054d38dabca3f9aac,Cincinnati,city,3616,strictly_longest
 39063,Hancock County,OH,doc_d127083ccc38a27864f409a6,McComb,city,626,strictly_longest
@@ -2088,12 +2088,12 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 39083,Knox County,OH,doc_492fdfeb000f671b25bbba15,Gambier,city,466,strictly_longest
 39085,Lake County,OH,doc_ec0d434017cd65b35e25cb62,Painesville,city,917,strictly_longest
 39087,Lawrence County,OH,doc_516237eace25ddd2894812f7,Ironton,city,694,only_eligible_document
-39089,Licking County,OH,doc_2382a546b6c1fbb3ae154571,New Albany,city,1488,strictly_longest
+39089,Licking County,OH,doc_ea22ecbdc3bc9b2edcce3af3,Newark,city,976,strictly_longest
 39091,Logan County,OH,doc_8864beeafcd289af06272b78,Bellefontaine,city,529,strictly_longest
 39093,Lorain County,OH,doc_1c6cb91b1d0a21263ef1bfeb,North Ridgeville,city,1804,strictly_longest
 39095,Lucas County,OH,doc_bf5a2cd0b344041622ce347b,Toledo,city,979,strictly_longest
 39097,Madison County,OH,doc_978ffd75be51607f88a57871,West Jefferson,city,958,strictly_longest
-39099,Mahoning County,OH,doc_293a8c4e1d7622fb559ed311,Columbiana,city,680,strictly_longest
+39099,Mahoning County,OH,doc_fe75551af1e87b28d2a8567a,Poland,city,537,strictly_longest
 39101,Marion County,OH,,,,,no_mapped_document
 39103,Medina County,OH,doc_65c5e025dd07acd05cf57a55,Wadsworth,city,765,strictly_longest
 39105,Meigs County,OH,doc_6b1f7b53416cea6ce7af0b20,Rutland,city,420,strictly_longest
@@ -2114,7 +2114,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 39135,Preble County,OH,doc_9ec3b7c0c9457d073a9ff87a,West Alexandria,city,650,strictly_longest
 39137,Putnam County,OH,doc_038707d06e841f65201caa0a,Leipsic,city,574,strictly_longest
 39139,Richland County,OH,doc_57920ff0a79676f7543c95b6,Shelby,city,763,strictly_longest
-39141,Ross County,OH,doc_ef80605dc6386687d631e7f2,Chillicothe,city,564,strictly_longest
+39141,Ross County,OH,doc_ef80605dc6386687d631e7f2,Chillicothe,city,564,only_eligible_document
 39143,Sandusky County,OH,doc_ffa935e1657f3474f268da0c,Clyde,city,1278,strictly_longest
 39145,Scioto County,OH,doc_59ed46af0f9507a60a1d7028,Portsmouth,city,552,strictly_longest
 39147,Seneca County,OH,doc_bb54445fe95566a766c28b67,Tiffin,city,477,strictly_longest
@@ -2126,9 +2126,9 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 39159,Union County,OH,doc_e6f9c6fdf7ad97f2b59fdbc6,Marysville,city,1756,strictly_longest
 39161,Van Wert County,OH,doc_8615ce170aaa73fce7bc554b,Van Wert,city,784,strictly_longest
 39163,Vinton County,OH,,,,,no_mapped_document
-39165,Warren County,OH,doc_50e196499138e635deaba4ef,Monroe,city,1900,strictly_longest
+39165,Warren County,OH,doc_9f0090d1596abfe528759990,Middletown,city,1017,strictly_longest
 39167,Washington County,OH,doc_308ddfcac10930078e638b21,Marietta,city,512,strictly_longest
-39169,Wayne County,OH,doc_403569e448aff6cf5dfb5e30,Norton,city,967,strictly_longest
+39169,Wayne County,OH,doc_e5c166bda636ba07a0d0f7ef,Smithville,city,708,strictly_longest
 39171,Williams County,OH,doc_b6e4fed65d990682b9d58907,Bryan,city,421,strictly_longest
 39173,Wood County,OH,doc_2003574485032a07f76d749f,North Baltimore,city,908,strictly_longest
 39175,Wyandot County,OH,doc_b6d5a24473e0476a62d69028,Upper Sandusky,city,431,strictly_longest
@@ -2178,40 +2178,40 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 40087,McClain County,OK,doc_1492265ae8bce1a13dc111a4,Purcell,city,411,strictly_longest
 40089,McCurtain County,OK,doc_f588a51349fb9f054c6f9287,Broken Bow,city,668,strictly_longest
 40091,McIntosh County,OK,doc_e006f8681e1450fc16a8171e,Eufaula,city,364,only_eligible_document
-40093,Major County,OK,doc_a3b8197db06d75b4449ecba5,Seiling,city,132,only_eligible_document
+40093,Major County,OK,,,,,no_eligible_document_after_population_screen
 40095,Marshall County,OK,doc_5b65628d1767612bc328d223,Madill,city,639,only_eligible_document
 40097,Mayes County,OK,doc_0a644368606a57f4b3071aa6,Pryor Creek,city,347,strictly_longest
 40099,Murray County,OK,doc_66781cc36a6a6d33354fc537,Davis,city,532,only_eligible_document
 40101,Muskogee County,OK,doc_7ab6019a4e9682f5e4725c61,Muskogee,city,1296,only_eligible_document
 40103,Noble County,OK,doc_8aa532e082c5b1fa647c797a,Perry,city,438,only_eligible_document
 40105,Nowata County,OK,doc_4bcd47240eaf5e3d67f17f8f,South Coffeyville,city,182,only_eligible_document
-40107,Okfuskee County,OK,doc_6755e1cbc5cba00e24926cfe,Okmulgee,city,402,strictly_longest
+40107,Okfuskee County,OK,doc_b185faa9d3ec256e30d78479,Okemah,city,237,only_eligible_document
 40109,Oklahoma County,OK,doc_3ebee94b3b2030f2e4478d55,Oklahoma City,city,2059,strictly_longest
-40111,Okmulgee County,OK,doc_41d36858bc9e0da9986e02ac,Mounds,city,572,strictly_longest
+40111,Okmulgee County,OK,doc_6755e1cbc5cba00e24926cfe,Okmulgee,city,402,strictly_longest
 40113,Osage County,OK,doc_5f3e5c1e8a2c522e676c7c87,Tulsa,city,3494,strictly_longest
 40115,Ottawa County,OK,doc_118c7b2dee185d950533fa1d,Miami,city,896,strictly_longest
 40117,Pawnee County,OK,,,,,no_mapped_document
 40119,Payne County,OK,doc_f2a634b62a0110dabc83bc56,Stillwater,city,1376,strictly_longest
 40121,Pittsburg County,OK,doc_3cd5c952fa6d3da3dd7b567b,McAlester,city,1060,only_eligible_document
 40123,Pontotoc County,OK,doc_0578bb71fc2b042bcc6ee4ed,Ada,city,774,only_eligible_document
-40125,Pottawatomie County,OK,doc_3ebee94b3b2030f2e4478d55,Oklahoma City,city,2059,strictly_longest
+40125,Pottawatomie County,OK,doc_39cd8f2e19a4c90db2ca5043,Shawnee,city,1122,strictly_longest
 40127,Pushmataha County,OK,,,,,no_mapped_document
 40129,Roger Mills County,OK,,,,,no_mapped_document
-40131,Rogers County,OK,doc_5f3e5c1e8a2c522e676c7c87,Tulsa,city,3494,strictly_longest
+40131,Rogers County,OK,doc_1848a042543572c48f3480ec,Claremore,city,469,strictly_longest
 40133,Seminole County,OK,doc_e321cec31531bd28600ee5f9,Seminole,city,336,strictly_longest
 40135,Sequoyah County,OK,doc_a50d3cbd856e0b426dea7e40,Sallisaw,city,694,strictly_longest
 40137,Stephens County,OK,doc_733fb17d885dbc201d6f4b50,Duncan,city,267,strictly_longest
 40139,Texas County,OK,doc_ce2a9e536033dc2cc1d7fdf1,Guymon,city,618,strictly_longest
 40141,Tillman County,OK,,,,,no_mapped_document
 40143,Tulsa County,OK,doc_5f3e5c1e8a2c522e676c7c87,Tulsa,city,3494,strictly_longest
-40145,Wagoner County,OK,doc_5f3e5c1e8a2c522e676c7c87,Tulsa,city,3494,strictly_longest
+40145,Wagoner County,OK,doc_864e8bc1eccf32e5cf9e4834,Broken Arrow,city,2024,strictly_longest
 40147,Washington County,OK,doc_f58c69d250b4fddc9521d4db,Bartlesville,city,890,only_eligible_document
 40149,Washita County,OK,doc_4fd099f8194934c6c6d8fe15,New Cordell,city,265,strictly_longest
 40151,Woods County,OK,doc_c5bf83136b3e419a07512263,Alva,city,373,only_eligible_document
 40153,Woodward County,OK,doc_4281cf6f442b0501c35bd980,Woodward,city,276,strictly_longest
 41001,Baker County,OR,doc_3a17b4e67f768665cb853d8b,Baker City,city,578,only_eligible_document
 41003,Benton County,OR,doc_2731bbd3cdef1c418eed82bf,Corvallis,city,1144,strictly_longest
-41005,Clackamas County,OR,doc_9d505a0470f836dfc8e103f6,Portland,city,3899,strictly_longest
+41005,Clackamas County,OR,doc_b036d509ec01dc7241927f46,West Linn,city,1807,strictly_longest
 41007,Clatsop County,OR,doc_29dd354d88d3903713ba1e6d,Warrenton,city,797,strictly_longest
 41009,Columbia County,OR,doc_041ca7d539bd986a74838656,St. Helens,city,1500,strictly_longest
 41011,Coos County,OR,doc_d752866f5b9059765c26ac66,Coos Bay,city,1025,strictly_longest
@@ -2242,7 +2242,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 41061,Union County,OR,doc_d13d8ac48ca803832e8fca67,La Grande,city,892,strictly_longest
 41063,Wallowa County,OR,doc_e602874eec0ee8bd1aaa0cac,Joseph,city,213,only_eligible_document
 41065,Wasco County,OR,doc_6861f9270fed9a98d5eaeafd,The Dalles,city,934,strictly_longest
-41067,Washington County,OR,doc_9d505a0470f836dfc8e103f6,Portland,city,3899,strictly_longest
+41067,Washington County,OR,doc_4fe6cbc67961d42de7042379,Hillsboro,city,1114,strictly_longest
 41069,Wheeler County,OR,,,,,no_mapped_document
 41071,Yamhill County,OR,doc_04a79c72aea799d64f0b32ad,Newberg,city,1150,strictly_longest
 42001,Adams County,PA,doc_39e64ec934addc72a5b18457,Gettysburg,city,877,strictly_longest
@@ -2332,11 +2332,11 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 45025,Chesterfield County,SC,doc_e6228d99398607a242534bca,Chesterfield,city,372,strictly_longest
 45027,Clarendon County,SC,doc_adb624a1bddccf640974d7b0,Manning,city,334,strictly_longest
 45029,Colleton County,SC,doc_e9311f594b234dc094409588,Edisto Beach,city,832,strictly_longest
-45031,Darlington County,SC,doc_03821c0707b00515eaddfdcb,Florence,city,1090,strictly_longest
+45031,Darlington County,SC,doc_83e5dbfeab33d835188f0670,Hartsville,city,844,strictly_longest
 45033,Dillon County,SC,doc_b07866e756d26f08cea2d33a,Dillon,county,338,strictly_longest
 45035,Dorchester County,SC,doc_4b688f859df6f73238f21a8c,North Charleston,city,924,strictly_longest
 45037,Edgefield County,SC,doc_1f5ed6e7fa06e8f2e82b4b17,Edgefield,county,846,strictly_longest
-45039,Fairfield County,SC,doc_a53eee6f8a82d9084ce743a3,Blythewood,city,674,strictly_longest
+45039,Fairfield County,SC,doc_17863493628da9ae6946a3e4,Winnsboro,city,149,only_eligible_document
 45041,Florence County,SC,doc_03821c0707b00515eaddfdcb,Florence,city,1090,strictly_longest
 45043,Georgetown County,SC,doc_7b0fbb239a0163afc2f07926,Georgetown,county,748,strictly_longest
 45045,Greenville County,SC,doc_cc4b6f1b5a690f5809be395c,Greenville,city,1244,strictly_longest
@@ -2460,11 +2460,11 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 47057,Grainger County,TN,doc_8be2776269ea32e91116020a,Bean Station,city,224,strictly_longest
 47059,Greene County,TN,doc_c1724368ac66dad9ecaa2b2f,Mosheim,city,289,strictly_longest
 47061,Grundy County,TN,doc_b2198941c0960b87a6e4fd10,Monteagle,city,330,strictly_longest
-47063,Hamblen County,TN,doc_119a5ef35aeb3766beca3b8f,Morristown,city,718,strictly_longest
+47063,Hamblen County,TN,doc_119a5ef35aeb3766beca3b8f,Morristown,city,718,only_eligible_document
 47065,Hamilton County,TN,doc_8c57ef0b04ea268a99638800,Chattanooga,city,2256,strictly_longest
 47067,Hancock County,TN,doc_0cc615e2aaa35b394f2f82e6,Sneedville,city,41,only_eligible_document; charter_only
 47069,Hardeman County,TN,doc_0946abcf2ebb92110df16134,Bolivar,city,335,strictly_longest
-47071,Hardin County,TN,doc_05fcaa49f2d2d25753918084,Adamsville,city,225,strictly_longest
+47071,Hardin County,TN,doc_6c2959846a9879c4073799b5,Savannah,city,44,strictly_longest; charter_only
 47073,Hawkins County,TN,doc_42f2a29c3d24d087b213c965,Kingsport,city,1034,strictly_longest
 47075,Haywood County,TN,doc_b465d16624c36a66a23a1c2d,Stanton,city,84,strictly_longest
 47077,Henderson County,TN,doc_b3600339bd5b62cb951ea6f7,Lexington,city,302,strictly_longest
@@ -2473,7 +2473,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 47083,Houston County,TN,doc_3f781aab996b6e5770290386,Erin,city,307,strictly_longest
 47085,Humphreys County,TN,doc_1adea8fd1797e2ded2569913,Waverly,city,332,strictly_longest
 47087,Jackson County,TN,doc_cb637bb28bb24631c799fea5,Gainesboro,city,236,strictly_longest
-47089,Jefferson County,TN,doc_119a5ef35aeb3766beca3b8f,Morristown,city,718,strictly_longest
+47089,Jefferson County,TN,doc_cc4b5df77962d678a7591921,Jefferson City,city,370,strictly_longest
 47091,Johnson County,TN,doc_14b05515edb2a61a712455d8,Mountain City,city,336,strictly_longest
 47093,Knox County,TN,doc_9d720dad67e3460fdb4be256,Knoxville,city,1896,strictly_longest
 47095,Lake County,TN,doc_f721c8491eaf08dbf2463b36,Tiptonville,city,229,strictly_longest
@@ -2481,8 +2481,8 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 47099,Lawrence County,TN,doc_36f9243d461e6d2b3a139235,Lawrenceburg,city,530,strictly_longest
 47101,Lewis County,TN,doc_78d48d9321d1c8b497489d69,Hohenwald,city,373,strictly_longest
 47103,Lincoln County,TN,doc_8fa2034881c0f97a53d64687,Fayetteville,city,305,strictly_longest
-47105,Loudon County,TN,doc_13ff5345fa48ef1a6ccad1bf,Farragut,city,1066,strictly_longest
-47107,McMinn County,TN,doc_1c156a9bfffe3c9b56458298,Sweetwater,city,535,strictly_longest
+47105,Loudon County,TN,doc_c8373c9709d2592151e00141,Loudon,city,497,strictly_longest
+47107,McMinn County,TN,doc_61e7c9768fda358e9496c9b5,Englewood,city,305,strictly_longest
 47109,McNairy County,TN,doc_a7f9d5b114fedc1f2e24396a,Selmer,city,357,strictly_longest
 47111,Macon County,TN,doc_adaf893bb1cc98f0fbf353d4,Lafayette,city,453,strictly_longest
 47113,Madison County,TN,doc_fa7ad9fc324e3b00a13b80bc,Jackson,city,710,strictly_longest
@@ -2493,7 +2493,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 47123,Monroe County,TN,doc_1c156a9bfffe3c9b56458298,Sweetwater,city,535,strictly_longest
 47125,Montgomery County,TN,doc_dbe20b8e1e459468ede8a9c0,Clarksville,city,1532,only_eligible_document
 47127,Moore County,TN,doc_2d2f67a4f9a5e86f04b89ed6,"Lynchburg, Moore",both,36,only_eligible_document; charter_only
-47129,Morgan County,TN,doc_46f6a0c18ec63a1b72987d61,Oliver Springs,city,377,strictly_longest
+47129,Morgan County,TN,doc_1de861f09905d16d50fbc472,Oakdale,city,151,strictly_longest
 47131,Obion County,TN,doc_967bcbb87534cebbb3455362,Union City,city,330,strictly_longest
 47133,Overton County,TN,doc_e6ebd6ffab00d8e6d51b200a,Livingston,city,292,strictly_longest
 47135,Perry County,TN,doc_d6b38d892890c97cf90187ed,Linden,city,177,strictly_longest
@@ -2527,7 +2527,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48001,Anderson County,TX,doc_b9b45a79ba85d1600270df22,Palestine,city,1010,strictly_longest
 48003,Andrews County,TX,doc_3d6faf556073cd563f20d43d,Andrews,city,563,only_eligible_document
 48005,Angelina County,TX,doc_c0716ba77e4a958f1866abde,Lufkin,city,1100,only_eligible_document
-48007,Aransas County,TX,doc_789eda67ca62aae6c7ce32c9,Corpus Christi,city,1849,strictly_longest
+48007,Aransas County,TX,doc_080e7bb2cb89ec9cbbc61b8c,Aransas Pass,city,1144,strictly_longest
 48009,Archer County,TX,doc_465371c76ebce44857945b80,Holliday,city,272,strictly_longest
 48011,Armstrong County,TX,,,,,no_mapped_document
 48013,Atascosa County,TX,doc_774679dbc2f9cbfdee711b34,Lytle,city,756,strictly_longest
@@ -2562,14 +2562,14 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48071,Chambers County,TX,doc_0186cd68250d84065e591b38,Baytown,city,1246,strictly_longest
 48073,Cherokee County,TX,doc_0307879936096483ad96537c,Jacksonville,city,986,strictly_longest
 48075,Childress County,TX,doc_574b7bf7fc4cfcdc0dddd44e,Childress,city,784,only_eligible_document
-48077,Clay County,TX,doc_cc28b6936a46dbbbf61a2b07,Wichita Falls,city,1374,strictly_longest
+48077,Clay County,TX,doc_8625835d5da899d2578faa24,Henrietta,city,544,only_eligible_document
 48079,Cochran County,TX,doc_0a7f9320c655810f98a16601,Morton,city,226,only_eligible_document
 48081,Coke County,TX,,,,,no_mapped_document
 48083,Coleman County,TX,doc_0510696e2eb0f66eb2be8190,Coleman,city,415,strictly_longest
 48085,Collin County,TX,doc_7457345d63260bb9fd39e78c,Frisco,city,1676,strictly_longest
 48087,Collingsworth County,TX,,,,,no_mapped_document
 48089,Colorado County,TX,doc_3fa7a18b0563757aa817bce2,Columbus,city,518,strictly_longest
-48091,Comal County,TX,doc_5331126a3aa7d377f77564dd,San Antonio,city,2330,strictly_longest
+48091,Comal County,TX,doc_016a6b63e48f51bf17e3a53f,New Braunfels,city,1590,strictly_longest
 48093,Comanche County,TX,,,,,no_mapped_document
 48095,Concho County,TX,,,,,no_mapped_document
 48097,Cooke County,TX,doc_7ac4ad58a70f6d9bf368f75c,Gainesville,city,976,strictly_longest
@@ -2593,20 +2593,20 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48133,Eastland County,TX,doc_009f8d4652cc103c39494f3e,Eastland,city,551,strictly_longest
 48135,Ector County,TX,doc_7767652f2396b7b869dace03,Odessa,city,1262,only_eligible_document
 48137,Edwards County,TX,,,,,no_mapped_document
-48139,Ellis County,TX,doc_cccfb2f1c2074961ccc225d2,Cedar Hill,city,1584,strictly_longest
+48139,Ellis County,TX,doc_6d4703942440ed1af92d40fa,Waxahachie,city,1404,strictly_longest
 48141,El Paso County,TX,doc_2699d3831528e1a8ed4c1589,El Paso,city,2924,strictly_longest
 48143,Erath County,TX,doc_4693f7242a1157e0470c243f,Stephenville,city,458,only_eligible_document
-48145,Falls County,TX,doc_33d342c8d1bb7eaef8c5c5e2,Bruceville-Eddy,city,438,strictly_longest
+48145,Falls County,TX,doc_822e170945b0f224ffeffdd9,Rosebud,city,412,only_eligible_document
 48147,Fannin County,TX,doc_596e9bdfa542ff28d6b69627,Bonham,city,701,strictly_longest
 48149,Fayette County,TX,doc_52f5cfc435517fccf139865c,Schulenburg,city,568,strictly_longest
-48151,Fisher County,TX,doc_ba6e04d25f9085fd98b9aa7b,Hamlin,city,249,only_eligible_document
+48151,Fisher County,TX,,,,,no_eligible_document_after_population_screen
 48153,Floyd County,TX,doc_30b66b7e9169f4da8748272d,Lockney,city,207,only_eligible_document
 48155,Foard County,TX,,,,,no_mapped_document
 48157,Fort Bend County,TX,doc_ab6d983a4d667f518a764d39,Houston,city,2784,strictly_longest
 48159,Franklin County,TX,doc_aed48fe9619ee0c96b7401a4,Mount Vernon,city,724,strictly_longest
 48161,Freestone County,TX,doc_18ed28f136b3981665d7ef5b,Fairfield,city,414,strictly_longest
 48163,Frio County,TX,doc_9d30d17c859f8875c6b43334,Pearsall,city,830,only_eligible_document
-48165,Gaines County,TX,doc_eb703c0aaf05d0121371e276,Denver City,city,439,strictly_longest
+48165,Gaines County,TX,doc_16f723e1d0d8e4c26ce88938,Seminole,city,375,strictly_longest
 48167,Galveston County,TX,doc_a8a68facf79a0c9be215ce0f,Galveston,city,1674,strictly_longest
 48169,Garza County,TX,doc_67eee23cda53e167afd5939b,Post,city,436,only_eligible_document
 48171,Gillespie County,TX,doc_d97ad397f47ceeea53385719,Fredericksburg,city,1004,only_eligible_document
@@ -2617,7 +2617,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48181,Grayson County,TX,doc_1fa7a93ec9d5a360320ebae9,Denison,city,1470,strictly_longest
 48183,Gregg County,TX,doc_29283801c5b459969d024c74,Kilgore,city,774,strictly_longest
 48185,Grimes County,TX,doc_8e08079eb82d6a9554168a23,Navasota,city,771,only_eligible_document
-48187,Guadalupe County,TX,doc_f07b64bd12d6d0127849724d,Universal City,city,1624,strictly_longest
+48187,Guadalupe County,TX,doc_016a6b63e48f51bf17e3a53f,New Braunfels,city,1590,strictly_longest
 48189,Hale County,TX,doc_b08ceb82fecf52ae23e1a27e,Plainview,city,912,strictly_longest
 48191,Hall County,TX,doc_87126e86d909180f860edc55,Memphis,city,258,only_eligible_document
 48193,Hamilton County,TX,doc_faf5f59fc640f94279df61bd,Hamilton,city,504,only_eligible_document
@@ -2649,10 +2649,10 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48245,Jefferson County,TX,doc_79289c74d91c753faf754f53,Port Arthur,city,1360,strictly_longest
 48247,Jim Hogg County,TX,,,,,no_mapped_document
 48249,Jim Wells County,TX,doc_e6558aeea1915989da52212f,Alice,city,1000,only_eligible_document
-48251,Johnson County,TX,doc_f95614a8b7bbd7f63201171b,Crowley,city,1304,strictly_longest
+48251,Johnson County,TX,doc_a6e58fb7499d075b6854ee5e,Burleson,city,1303,strictly_longest
 48253,Jones County,TX,doc_789072c36eb3821588bb461b,Abilene,city,1246,strictly_longest
 48255,Karnes County,TX,doc_d0363e0e1365e56db741f3a9,Kenedy,city,670,only_eligible_document
-48257,Kaufman County,TX,doc_08031244817949c3f3481f9e,Mesquite,city,1992,strictly_longest
+48257,Kaufman County,TX,doc_20cb2d3f1f8a9f4e737076a9,Terrell,city,1276,strictly_longest
 48259,Kendall County,TX,doc_decf486fd4cb070c967adac4,Boerne,city,660,only_eligible_document
 48261,Kenedy County,TX,,,,,no_mapped_document
 48263,Kent County,TX,,,,,no_mapped_document
@@ -2660,7 +2660,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48267,Kimble County,TX,doc_5dd608b7a7d5f1c191cde3cd,Junction,city,272,only_eligible_document
 48269,King County,TX,,,,,no_mapped_document
 48271,Kinney County,TX,,,,,no_mapped_document
-48273,Kleberg County,TX,doc_789eda67ca62aae6c7ce32c9,Corpus Christi,city,1849,strictly_longest
+48273,Kleberg County,TX,doc_15f61eb286acfc9f7a83c80d,Kingsville,city,1594,only_eligible_document
 48275,Knox County,TX,doc_ba4b3b09705ca02ee943a787,Knox City,city,269,only_eligible_document
 48277,Lamar County,TX,doc_b53a9b5cd266c874d835196f,Paris,city,954,strictly_longest
 48279,Lamb County,TX,doc_cf478d72cdec44dfc4043512,Littlefield,city,640,strictly_longest
@@ -2669,7 +2669,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48285,Lavaca County,TX,doc_70968b0587e424f4fc5fa520,Yoakum,city,594,strictly_longest
 48287,Lee County,TX,doc_fa24e73a8e84fd24fceb56f4,Giddings,city,916,only_eligible_document
 48289,Leon County,TX,,,,,no_mapped_document
-48291,Liberty County,TX,doc_05c4561954aac47b0af75d89,Mont Belvieu,city,962,strictly_longest
+48291,Liberty County,TX,doc_7424081cbc0555ba5f4af29d,Cleveland,city,878,strictly_longest
 48293,Limestone County,TX,doc_eb78ec5d3a463b1b9b7ee85a,Mexia,city,521,strictly_longest
 48295,Lipscomb County,TX,,,,,no_mapped_document
 48297,Live Oak County,TX,doc_9178a2a4877ec224c5c507e3,George West,city,784,only_eligible_document
@@ -2682,19 +2682,19 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48311,McMullen County,TX,,,,,no_mapped_document
 48313,Madison County,TX,doc_94660ebecd65fcea304c6f48,Madisonville,city,375,only_eligible_document
 48315,Marion County,TX,doc_bc9b3fc3c105183a653d11aa,Jefferson,city,416,strictly_longest
-48317,Martin County,TX,doc_529eb75fd4c5d6d4dd34c965,Midland,city,1348,strictly_longest
+48317,Martin County,TX,doc_905a266003cb25595a062063,Stanton,city,343,only_eligible_document
 48319,Mason County,TX,,,,,no_mapped_document
 48321,Matagorda County,TX,doc_14ce948b6f03ebb6a626b9d0,Bay City,city,986,strictly_longest
 48323,Maverick County,TX,doc_9835182d2a12dc27fe98756e,Eagle Pass,city,1448,only_eligible_document
-48325,Medina County,TX,doc_5331126a3aa7d377f77564dd,San Antonio,city,2330,strictly_longest
+48325,Medina County,TX,doc_561d51208d90bdea9444f16d,Hondo,city,817,strictly_longest
 48327,Menard County,TX,,,,,no_mapped_document
 48329,Midland County,TX,doc_529eb75fd4c5d6d4dd34c965,Midland,city,1348,strictly_longest
 48331,Milam County,TX,doc_72ee971feb2d2df21a565b6f,Rockdale,city,864,strictly_longest
 48333,Mills County,TX,,,,,no_mapped_document
 48335,Mitchell County,TX,doc_2be673131b5307ceb773612e,Colorado City,city,647,only_eligible_document
 48337,Montague County,TX,doc_b7a87b813ff1e4b921d94c7a,St. Jo,city,493,strictly_longest
-48339,Montgomery County,TX,doc_ab6d983a4d667f518a764d39,Houston,city,2784,strictly_longest
-48341,Moore County,TX,doc_c9e76da9dfccee05709d84db,Dumas,city,667,strictly_longest
+48339,Montgomery County,TX,doc_2aa7720ce67b61e3c1140444,Conroe,city,922,strictly_longest
+48341,Moore County,TX,doc_c9e76da9dfccee05709d84db,Dumas,city,667,only_eligible_document
 48343,Morris County,TX,doc_3c7ceaf351cecd3c993d3d43,Daingerfield,city,470,only_eligible_document
 48345,Motley County,TX,,,,,no_mapped_document
 48347,Nacogdoches County,TX,,,,,no_mapped_document
@@ -2704,16 +2704,16 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48355,Nueces County,TX,doc_789eda67ca62aae6c7ce32c9,Corpus Christi,city,1849,strictly_longest
 48357,Ochiltree County,TX,,,,,no_mapped_document
 48359,Oldham County,TX,doc_63f1368e67edf3af6328827d,Vega,city,260,only_eligible_document
-48361,Orange County,TX,doc_79289c74d91c753faf754f53,Port Arthur,city,1360,strictly_longest
+48361,Orange County,TX,doc_3e955b81f03ae8de12ef2b06,Orange,city,1118,strictly_longest
 48363,Palo Pinto County,TX,doc_ef038a65fbae25f8545893ab,Mineral Wells,city,1098,only_eligible_document
 48365,Panola County,TX,doc_94ee266714de32196eafa6dc,Carthage,city,654,only_eligible_document
-48367,Parker County,TX,doc_cb47fe37c18cdec934bd945a,Fort Worth,city,1105,strictly_longest
+48367,Parker County,TX,doc_bc910a34264941ed17c8978d,Weatherford,city,1102,strictly_longest
 48369,Parmer County,TX,doc_6351eb3f5fa9c9a273fef4be,Friona,city,340,strictly_longest
 48371,Pecos County,TX,doc_37e7c4fba9fd773d4d297cd9,Fort Stockton,city,726,only_eligible_document
 48373,Polk County,TX,doc_baa71ca6f93e70377e151fb1,Livingston,city,714,strictly_longest
 48375,Potter County,TX,doc_d97059ffc7361e67c60c6627,Amarillo,city,1296,only_eligible_document
 48377,Presidio County,TX,,,,,no_mapped_document
-48379,Rains County,TX,doc_d2f1ea2785c93e45f1939a6e,Emory,city,396,strictly_longest
+48379,Rains County,TX,doc_d2f1ea2785c93e45f1939a6e,Emory,city,396,only_eligible_document
 48381,Randall County,TX,doc_d97059ffc7361e67c60c6627,Amarillo,city,1296,strictly_longest
 48383,Reagan County,TX,doc_674dd1211d874df45312b997,Big Lake,city,329,only_eligible_document
 48385,Real County,TX,,,,,no_mapped_document
@@ -2727,15 +2727,15 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48401,Rusk County,TX,doc_4620d8fc1df9202343cd6931,Henderson,city,848,strictly_longest
 48403,Sabine County,TX,doc_f0d3696a6d565ebdbfbe32cd,Pineland,city,417,strictly_longest
 48405,San Augustine County,TX,doc_d9396a7fcb4f3b0e4a8bd541,San Augustine,city,213,only_eligible_document
-48407,San Jacinto County,TX,doc_7424081cbc0555ba5f4af29d,Cleveland,city,878,only_eligible_document
-48409,San Patricio County,TX,doc_789eda67ca62aae6c7ce32c9,Corpus Christi,city,1849,strictly_longest
+48407,San Jacinto County,TX,,,,,no_eligible_document_after_population_screen
+48409,San Patricio County,TX,doc_e8362998b5bd96d49e836a37,Portland,city,1242,strictly_longest
 48411,San Saba County,TX,doc_7cbd704aa0dcd0440a31061a,San Saba,city,606,only_eligible_document
 48413,Schleicher County,TX,,,,,no_mapped_document
 48415,Scurry County,TX,,,,,no_mapped_document
 48417,Shackelford County,TX,,,,,no_mapped_document
 48419,Shelby County,TX,,,,,no_mapped_document
 48421,Sherman County,TX,doc_4cecc676497dacab13e1295a,Stratford,city,246,only_eligible_document
-48423,Smith County,TX,doc_deb36150455e5de9018c16a3,Overton,city,603,strictly_longest
+48423,Smith County,TX,doc_8322551ba846bc2bddf92613,Lindale,city,510,strictly_longest
 48425,Somervell County,TX,,,,,no_mapped_document
 48427,Starr County,TX,doc_10a60db72d2ba5ccaf18a485,Roma,city,518,only_eligible_document
 48429,Stephens County,TX,doc_f64a37ffc4b89a01f8b2b4d3,Breckenridge,city,736,only_eligible_document
@@ -2743,24 +2743,24 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48433,Stonewall County,TX,,,,,no_mapped_document
 48435,Sutton County,TX,,,,,no_mapped_document
 48437,Swisher County,TX,doc_e259f7e9939de7dbe988ae2c,Tulia,city,447,only_eligible_document
-48439,Tarrant County,TX,doc_908c9e39160277dcf03a867c,Flower Mound,city,1560,strictly_longest
+48439,Tarrant County,TX,doc_cd567c6bd99aa9a8396333d1,Grapevine,city,1544,strictly_longest
 48441,Taylor County,TX,doc_789072c36eb3821588bb461b,Abilene,city,1246,strictly_longest
 48443,Terrell County,TX,,,,,no_mapped_document
 48445,Terry County,TX,doc_b4576adc89be456bf2d41e63,Brownfield,city,709,only_eligible_document
 48447,Throckmorton County,TX,,,,,no_mapped_document
 48449,Titus County,TX,doc_e48d754aaf0b2e28cf58ab37,Mount Pleasant,city,428,only_eligible_document
 48451,Tom Green County,TX,doc_dd953dd0e5a356ab5a756ac4,San Angelo,city,1398,only_eligible_document
-48453,Travis County,TX,doc_7675693893f7e996f4ea7e06,Leander,city,1540,strictly_longest
+48453,Travis County,TX,doc_46b80ca3bdaa2d1d71b49bf0,Manor,city,1336,strictly_longest
 48455,Trinity County,TX,,,,,no_mapped_document
 48457,Tyler County,TX,doc_da18b0a9340c3c1da5b09a6d,Woodville,city,492,strictly_longest
-48459,Upshur County,TX,doc_65cc84b256bdb8318f622c42,Clarksville City,city,367,strictly_longest
+48459,Upshur County,TX,doc_4724ceabf8bad2358f84775d,Big Sandy,city,67,only_eligible_document
 48461,Upton County,TX,doc_f5791552cb2026744c0d756d,McCamey,city,200,only_eligible_document
 48463,Uvalde County,TX,,,,,no_mapped_document
 48465,Val Verde County,TX,doc_2103a5b73a2d6fedc23e4c76,Del Rio,city,1218,only_eligible_document
 48467,Van Zandt County,TX,doc_12bb74036195a3544de6bf26,Wills Point,city,742,strictly_longest
 48469,Victoria County,TX,doc_8d4272040bfb8d10b11b5e84,Victoria,city,1152,only_eligible_document
 48471,Walker County,TX,doc_63bd2baa2d39ea4cef6ac056,Huntsville,city,750,only_eligible_document
-48473,Waller County,TX,doc_ab6d983a4d667f518a764d39,Houston,city,2784,strictly_longest
+48473,Waller County,TX,doc_87ab2a7a5f660cc2bc1c0601,Katy,city,858,strictly_longest
 48475,Ward County,TX,doc_a2a3b74bf600099cf1b52a0d,Monahans,city,438,only_eligible_document
 48477,Washington County,TX,doc_22e9949a9e14437c41ce552e,Brenham,city,857,only_eligible_document
 48479,Webb County,TX,doc_d0fb3eca75facb1aca0b8ac2,Laredo,city,1960,only_eligible_document
@@ -2771,7 +2771,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 48489,Willacy County,TX,,,,,no_mapped_document
 48491,Williamson County,TX,doc_7675693893f7e996f4ea7e06,Leander,city,1540,strictly_longest
 48493,Wilson County,TX,doc_7b231cce58915201836b795f,La Vernia,city,752,strictly_longest
-48495,Winkler County,TX,doc_9949141b3b04b5bf4388da91,Kermit,city,596,strictly_longest
+48495,Winkler County,TX,doc_9949141b3b04b5bf4388da91,Kermit,city,596,only_eligible_document
 48497,Wise County,TX,doc_c38639e1ce2a78f4af99627f,Decatur,city,1154,strictly_longest
 48499,Wood County,TX,doc_9aa6bd4e1518ccc3dbe67c69,Mineola,city,660,strictly_longest
 48501,Yoakum County,TX,doc_eb703c0aaf05d0121371e276,Denver City,city,439,strictly_longest
@@ -2822,7 +2822,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 50025,Windham County,VT,,,,,no_mapped_document
 50027,Windsor County,VT,doc_0944064d5c81ccba284c5925,Springfield,city,534,strictly_longest
 51001,Accomack County,VA,doc_80683cc48778983d2d33bbea,Accomack,county,720,strictly_longest
-51003,Albemarle County,VA,doc_008a41af0a1e595f1c4c126f,Albemarle,county,1346,strictly_longest
+51003,Albemarle County,VA,doc_008a41af0a1e595f1c4c126f,Albemarle,county,1346,only_eligible_document
 51005,Alleghany County,VA,doc_f6ba6e008c8f298de38c3973,Clifton Forge,city,956,strictly_longest
 51007,Amelia County,VA,doc_fa4a486a0f2f7e60dbc6cef7,Amelia,county,536,only_eligible_document
 51009,Amherst County,VA,doc_546b1dbf337e7ae3fdffbba2,Amherst,county,976,strictly_longest
@@ -2852,7 +2852,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 51059,Fairfax County,VA,doc_2d1f0afc709fa23c02fc104a,Fairfax,county,2091,strictly_longest
 51061,Fauquier County,VA,doc_9f3a66d47b335e1b89165c38,Warrenton,city,924,strictly_longest
 51063,Floyd County,VA,doc_0376a6d8b8c14fe8d8a7a575,Floyd,county,320,only_eligible_document
-51065,Fluvanna County,VA,doc_931c95d177364b8eccb23652,Fluvanna,county,692,strictly_longest
+51065,Fluvanna County,VA,doc_931c95d177364b8eccb23652,Fluvanna,county,692,only_eligible_document
 51067,Franklin County,VA,doc_a6638011919ddbd4f19ca40d,Franklin,county,926,only_eligible_document
 51069,Frederick County,VA,doc_66d9e9899d01189e80822c9d,Frederick,county,626,strictly_longest
 51071,Giles County,VA,,,,,no_mapped_document
@@ -2873,7 +2873,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 51101,King William County,VA,doc_9beb833f76f97ec33e1839da,King William,county,902,strictly_longest
 51103,Lancaster County,VA,doc_a6fb9bbd78f3c28f238b2279,Kilmarnock,city,530,strictly_longest
 51105,Lee County,VA,doc_a57b6dc7350896f4a5d1495d,Lee,county,156,only_eligible_document
-51107,Loudoun County,VA,doc_0ae71ea45924c0b15fa16a8f,Herndon,city,1616,strictly_longest
+51107,Loudoun County,VA,doc_662aef9dd8320d15edc95a3b,Leesburg,city,802,strictly_longest
 51109,Louisa County,VA,doc_c7af9827da7777d56a879fdc,Louisa,county,1098,strictly_longest
 51111,Lunenburg County,VA,doc_133d3b6e969e342996475a72,Victoria,city,552,strictly_longest
 51113,Madison County,VA,doc_9a54a3b06f72677c661d46d2,Madison,county,436,only_eligible_document
@@ -2884,7 +2884,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 51125,Nelson County,VA,doc_7d8036656e2eea8301d68576,Nelson,county,838,only_eligible_document
 51127,New Kent County,VA,doc_74ece12a0a66867ac2639392,New Kent,county,1144,only_eligible_document
 51131,Northampton County,VA,doc_41eaffd695b80c18d46fe89a,Cape Charles,city,376,strictly_longest
-51133,Northumberland County,VA,doc_a6fb9bbd78f3c28f238b2279,Kilmarnock,city,530,strictly_longest
+51133,Northumberland County,VA,doc_e566879a8a281c48e568f425,Northumberland,county,402,only_eligible_document
 51135,Nottoway County,VA,,,,,no_mapped_document
 51137,Orange County,VA,doc_d9e275c22ec0fc57f883e01d,Gordonsville,city,344,only_eligible_document
 51139,Page County,VA,doc_80858892ab4bf57da8ede14e,Luray,city,650,strictly_longest
@@ -2900,7 +2900,7 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 51161,Roanoke County,VA,doc_9a5e96c6640e45b7a4f5cd64,Roanoke,county,1156,strictly_longest
 51163,Rockbridge County,VA,,,,,no_mapped_document
 51165,Rockingham County,VA,doc_699f563eeff301feda2b5e6d,Rockingham,county,658,strictly_longest
-51167,Russell County,VA,doc_2fdf2de40a8904828a938294,St. Paul,city,556,only_eligible_document
+51167,Russell County,VA,,,,,no_eligible_document_after_population_screen
 51169,Scott County,VA,doc_db8495bdb8ec99db0542b4e9,Gate City,city,462,only_eligible_document
 51171,Shenandoah County,VA,doc_02b16d1ef44f07cdef9fe082,Mount Jackson,city,796,strictly_longest
 51173,Smyth County,VA,doc_6c868c0cbb0d7b2ecb044152,Smyth,county,656,strictly_longest
@@ -3114,8 +3114,8 @@ county_fips,county_name,state,selected_document_id,selected_jurisdiction_name,se
 55125,Vilas County,WI,doc_b474cb2365db39704a0a095e,Eagle River,city,654,strictly_longest
 55127,Walworth County,WI,doc_d2f278b4679c5787145a0d2c,Walworth,county,1608,strictly_longest
 55129,Washburn County,WI,doc_3d97b7ebade50b52cb23469b,Spooner,city,1060,strictly_longest
-55131,Washington County,WI,doc_a291fd1b6b54d62eb50405eb,Milwaukee,city,1997,strictly_longest
-55133,Waukesha County,WI,doc_a291fd1b6b54d62eb50405eb,Milwaukee,city,1997,strictly_longest
+55131,Washington County,WI,doc_cee38a05850ec413752270c1,Germantown,city,1034,strictly_longest
+55133,Waukesha County,WI,doc_8b93af7ae791cd9d33bfd845,Menomonee Falls,city,1306,strictly_longest
 55135,Waupaca County,WI,doc_eccb622be7bb1ec4f829dc26,Waupaca,city,798,strictly_longest
 55137,Waushara County,WI,doc_df230f1f448cb8e7a4b42940,Wautoma,city,862,strictly_longest
 55139,Winnebago County,WI,doc_5e686895f71ed7c6b59f1282,Neenah,city,988,strictly_longest
