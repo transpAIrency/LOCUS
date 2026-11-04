@@ -1,12 +1,31 @@
+# Credentials and local environments
+.DS_Store
 .env
 .env.*
+!.env.example
 .venv/
 __pycache__/
 *.py[cod]
+
+# Generated annotation ledgers and exports
 runs/
 outputs/
 *.sqlite3
-*.sqlite3-*
+*.sqlite3-shm
+*.sqlite3-wal
+*.sqlite3-journal
+
+# Small, verified release data belongs in data/. Keep full local corpora out
+# of Git; their fingerprints and availability are recorded in the manifest.
+data/local/
+# Full corpora are external inputs. Keep only the released text-only audit input.
+*.jsonl
+!data/benchmark/text_250.jsonl
+
+# Packaging and test by-products
+.pytest_cache/
+.ruff_cache/
+.coverage
 build/
 dist/
 *.egg-info/

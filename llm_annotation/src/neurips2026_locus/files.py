@@ -9,8 +9,8 @@ from hashlib import sha256
 import os
 from pathlib import Path, PurePosixPath
 import re
-import tempfile
 from typing import Iterator, TextIO
+from uuid import uuid4
 
 
 def opaque_document_id(locator: str, collection: str = "original") -> str:
@@ -63,13 +63,10 @@ def file_stamp(path: Path) -> list[int]:
     return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
 
 
-def reject_output_aliases(output: Path, *inputs: Path) -> None:
-    """Protect source files even when a destination is a symlink or hard link."""
-    for source in inputs:
-        if output.resolve() == source.resolve() or (
-            output.exists() and source.exists() and output.samefile(source)
-        ):
-            raise ValueError("The output must not replace an input file")
+def project_root() -> Path:
+    """Use the source checkout from any directory; wheels use the working directory."""
+    checkout = Path(__file__).resolve().parents[2]
+    return checkout if (checkout / "pyproject.toml").is_file() else Path.cwd()
 
 
 @contextmanager
@@ -79,22 +76,17 @@ def atomic_text_output(path: Path, *, overwrite: bool = False) -> Iterator[TextI
     The no-overwrite operation uses a hard link on the destination filesystem.
     Callers must protect their own input paths before choosing ``overwrite``.
     The context manager never opens or truncates an existing destination.
+    New outputs use normal 0666 file creation permissions filtered by umask.
     """
     if path.exists() and not overwrite:
         raise FileExistsError(f"Output already exists: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="\n",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temporary = Path(handle.name)
+        candidate = path.parent / f".{path.name}.{uuid4().hex}.tmp"
+        descriptor = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        temporary = candidate  # Only remove a file this invocation created.
+        with os.fdopen(descriptor, mode="w", encoding="utf-8", newline="\n") as handle:
             yield handle
             handle.flush()
             os.fsync(handle.fileno())

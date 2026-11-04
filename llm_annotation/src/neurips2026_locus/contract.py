@@ -1,8 +1,8 @@
-"""Shared municipal annotation policy; legacy reference labels remain readable."""
+"""Shared municipal annotation policy and inference request fingerprints."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import ast
 from functools import lru_cache
 from hashlib import sha256
 import json
@@ -39,17 +39,6 @@ SUB_CATEGORIES = (
     "Business",
     "Other",
 )
-TOPIC_SCHEMA_VERSION = "locus-topics-5-v1"
-# Input compatibility only: never accept these old labels as new model outputs.
-LEGACY_TOPIC_MAP = {
-    "Land use": "Zoning",
-    "Housing": "Zoning",
-    "Noise/Nuisance": "Nuisance",
-    "Public space": "Nuisance",
-    "Building/Safety": "Buildings",
-    "Business licensing": "Business",
-    "Other": "Other",
-}
 
 
 _POLICY_DIR = Path(__file__).parent / "municipal_law_annotation"
@@ -60,40 +49,6 @@ CLASSIFICATION_SCHEMA = json.loads(
 
 class ContractError(ValueError):
     """An annotation or input violates its declared contract."""
-
-
-@dataclass(frozen=True)
-class Classification:
-    """Legacy human/reference layout, not the current model output schema."""
-
-    is_substantive: int
-    primary_function: str
-    sub_category: str | None
-    logic: str
-
-    def as_dict(self) -> dict[str, Any]:
-        """Serialize a validated historical reference, not a current model response."""
-        validate_classification(self)
-        return asdict(self)
-
-
-def validate_classification(classification: Classification) -> None:
-    """Validate schema values plus cross-field LOCUS invariants."""
-
-    if classification.primary_function not in PRIMARY_FUNCTIONS:
-        raise ContractError("Unknown primary_function")
-    expected_substantive = int(classification.primary_function in SUBSTANTIVE_FUNCTIONS)
-    if (
-        type(classification.is_substantive) is not int
-        or classification.is_substantive != expected_substantive
-    ):
-        raise ContractError("is_substantive does not match primary_function")
-    if expected_substantive and classification.sub_category not in SUB_CATEGORIES:
-        raise ContractError("Substantive classifications require a valid sub_category")
-    if not expected_substantive and classification.sub_category is not None:
-        raise ContractError("Non-substantive classifications require null sub_category")
-    if not isinstance(classification.logic, str) or not classification.logic.strip():
-        raise ContractError("logic must be a non-empty sentence")
 
 
 def is_header_only_record(record: Mapping[str, Any]) -> bool:
@@ -136,26 +91,135 @@ def contract_sha256() -> str:
     return digest.hexdigest()
 
 
+# Only functions that construct requests or checkpoint identities belong here.
+# Export, CLI, retry, and documentation changes must not invalidate a run.
+# Frozen prompt helpers are already covered byte-for-byte by contract_sha256().
+# Add new request dependencies/settings here when changing construction; this
+# registry is explicit, not automatic dependency discovery.
+_REQUEST_CODE = {
+    "contract.py": (
+        "text_value",
+        "compose_input_text",
+        "_POLICY_DIR",
+        "CLASSIFICATION_SCHEMA",
+    ),
+    "pipeline.py": (
+        "canonical_json",
+        "source_locator",
+        "source_identity",
+        "limit_text",
+        "annotate_record",
+    ),
+    "generative.py": ("build_messages",),
+    "batch.py": ("request_id", "request_for", "request_digest", "adapter"),
+    "openai_batch.py": ("build_request", "REASONING_EFFORT"),
+    "google_batch.py": ("build_request", "THINKING_LEVEL"),
+    "jev.py": ("canonical_json_bytes",),
+}
+
+
+def _request_syntax(value):
+    """Serialize syntax without comments, docstrings, annotations, or locations.
+
+    Empty type_params is new in Python 3.12; omit it so Python 3.10 and 3.13
+    produce the same digest. Request string literals remain significant.
+    """
+    if isinstance(value, ast.AST):
+        fields = {}
+        for key, item in ast.iter_fields(value):
+            if key in {"annotation", "returns", "type_comment"} or (
+                key == "type_params" and not item
+            ):
+                continue
+            if (
+                key == "body"
+                and isinstance(item, list)
+                and item
+                and isinstance(item[0], ast.Expr)
+                and isinstance(item[0].value, ast.Constant)
+                and isinstance(item[0].value.value, str)
+            ):
+                item = item[1:]
+            fields[key] = _request_syntax(item)
+        return {"node": type(value).__name__, "fields": fields}
+    if isinstance(value, list):
+        return [_request_syntax(item) for item in value]
+    return value
+
+
+def _request_code_sha256(directory: Path) -> str:
+    """Hash the declared request/identity functions and their imported bindings."""
+    digest = sha256(b"locus-request-code-v2\0" + contract_sha256().encode())
+    for filename, names in _REQUEST_CODE.items():
+        tree = ast.parse((directory / filename).read_text(encoding="utf-8"))
+        selected = []
+        found = set()
+        for node in tree.body:
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name in names
+            ):
+                selected.append(node)
+                found.add(node.name)
+            elif isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in names
+                for target in node.targets
+            ):
+                selected.append(node)
+                found.update(
+                    target.id
+                    for target in node.targets
+                    if isinstance(target, ast.Name) and target.id in names
+                )
+        if found != set(names):
+            raise ContractError(
+                f"Request fingerprint declarations do not match {filename}"
+            )
+        referenced = set()
+        pending = [_request_syntax(selected)]
+        while pending:
+            item = pending.pop()
+            if isinstance(item, dict):
+                if item.get("node") == "Name":
+                    referenced.add(item["fields"]["id"])
+                pending.extend(item.values())
+            elif isinstance(item, list):
+                pending.extend(item)
+        imports = []
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                aliases = [
+                    alias
+                    for alias in node.names
+                    if (alias.asname or alias.name.split(".")[0]) in referenced
+                ]
+                if aliases:
+                    imports.append(
+                        ast.ImportFrom(
+                            module=node.module, names=aliases, level=node.level
+                        )
+                        if isinstance(node, ast.ImportFrom)
+                        else ast.Import(names=aliases)
+                    )
+        digest.update(filename.encode() + b"\0")
+        digest.update(
+            json.dumps(
+                _request_syntax(imports + selected),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        )
+    return digest.hexdigest()
+
+
 @lru_cache(maxsize=1)
 def request_builder_sha256() -> str:
-    """Fingerprint active request construction separately from the policy bundle.
+    """Bind request construction and identities, not whole source-file bytes.
 
-    This conservative code digest can change without changing inference inputs.
-    Per-request digests remain the evidence for the exact payload of each row.
+    Native batches also verify every reconstructed request against its exact
+    prepared digest. Model, policy, input, cap, and selection remain ledger-bound.
     """
-    digest = sha256(contract_sha256().encode())
-    for name in (
-        "contract.py",
-        "pipeline.py",
-        "generative.py",
-        "batch.py",
-        "openai_batch.py",
-        "google_batch.py",
-        "jev.py",
-    ):
-        digest.update(name.encode())
-        digest.update((Path(__file__).parent / name).read_bytes())
-    return digest.hexdigest()
+    return _request_code_sha256(Path(__file__).parent)
 
 
 def parse_annotation(value: Any) -> dict[str, Any]:
@@ -175,13 +239,37 @@ def _finite_float(value: str) -> float:
 
 
 def decode_json(text: str) -> Any:
-    """Reject duplicate keys and nonfinite numbers before validating the schema."""
-    return json.loads(
+    """Reject data that cannot be written back as strict UTF-8 JSON."""
+    value = json.loads(
         text,
         object_pairs_hook=_unique_object,
         parse_constant=_invalid_constant,
         parse_float=_finite_float,
     )
+    _validate_unicode(value)
+    return value
+
+
+def _validate_unicode(value: Any) -> None:
+    """Reject unpaired surrogates in metadata as well as model-input text.
+
+    JSON escapes can otherwise create invalid Unicode after UTF-8 decoding,
+    causing export to fail only after model requests have already been paid.
+    """
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError(
+                "JSON strings must contain valid Unicode scalar values"
+            ) from None
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _validate_unicode(key)
+            _validate_unicode(item)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_unicode(item)
 
 
 @lru_cache(maxsize=1)

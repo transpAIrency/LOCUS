@@ -45,6 +45,7 @@ from .jev import (
     JevError,
     JevHTTPError,
     JevResponse,
+    RetryDelayExceeded,
     get_api_key,
     load_dotenv,
 )
@@ -53,6 +54,7 @@ from .files import (
     canonical_document_locator,
     file_stamp,
     opaque_document_id,
+    project_root,
 )
 
 from .municipal_law_annotation.municipal_law_jev_adapter import (
@@ -240,6 +242,13 @@ def _is_web_url(value: Any) -> bool:
     return isinstance(value, str) and bool(re.match(r"https?://", value, re.I))
 
 
+def _is_absolute_local_path(value: Any) -> bool:
+    """Recognize explicit POSIX, Windows, home-relative, and file-URI locators."""
+    return isinstance(value, str) and bool(
+        re.match(r"(?:[/\\]|[A-Za-z]:[/\\]|~[/\\]|file:)", value, re.I)
+    )
+
+
 def _is_source_path(value: Any) -> bool:
     if not isinstance(value, str) or _is_web_url(value):
         return False
@@ -271,13 +280,20 @@ def public_source_record(record: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(value, list):
             return [clean(item, locator_values=locator_values) for item in value]
         if not isinstance(value, Mapping):
-            if locator_values and _is_source_path(value):
+            if _is_absolute_local_path(value) or (
+                locator_values and _is_source_path(value)
+            ):
                 return document_id(value)
             return value
-        if locator_values:
+        if locator_values or any(_is_absolute_local_path(key) for key in value):
             keyed_values: dict[str, Any] = {}
             for key, item in value.items():
-                public_key = document_id(key) if _is_source_path(key) else key
+                public_key = (
+                    document_id(key)
+                    if _is_absolute_local_path(key)
+                    or (locator_values and _is_source_path(key))
+                    else key
+                )
                 if public_key in keyed_values:
                     raise InputError(
                         "Public locator metadata has colliding document-ID keys"
@@ -308,6 +324,13 @@ def public_source_record(record: Mapping[str, Any]) -> dict[str, Any]:
                 result[key] = item
             elif key in {"source_document_slug", "source_document_slugs"}:
                 continue
+            elif re.search(
+                r"(?:^|_)(?:dirs?|director(?:y|ies)|folders?|roots?)$", key, re.I
+            ):
+                # A run directory is execution metadata, not a source document.
+                # Do not derive document_id from review_run_dir or similar keys.
+                if _is_web_url(item):
+                    result[key] = item
             elif key in _SOURCE_PATH_FIELDS:
                 if isinstance(item, str) and item and not _is_web_url(item):
                     if source_document is None:
@@ -421,6 +444,10 @@ def annotate_record(
             if cached
             else client.decide(request)
         )
+        if response.request_sha256 != request_hash:
+            raise InputError(
+                "Jev transport request hash differs from the constructed request"
+            )
         actual_model = response.body.get("model")
         requested_model = request["model"]
         if not isinstance(actual_model, str) or not actual_model.strip():
@@ -534,7 +561,7 @@ def ledger_metadata(connection: sqlite3.Connection) -> dict[str, Any]:
 
 
 def check_request_builders(connection: sqlite3.Connection) -> None:
-    """Reject changed request-building code before submitting additional work.
+    """Reject changed request/identity code, not comments or export-only changes.
 
     Older ledgers have no code fingerprint; keep them readable/resumable and
     leave their implementation provenance unknown. Do not silently backfill
@@ -543,7 +570,14 @@ def check_request_builders(connection: sqlite3.Connection) -> None:
     stored = connection.execute(
         "SELECT value FROM metadata WHERE key='request_builder_sha256'"
     ).fetchone()
-    if stored is not None and stored[0] != request_builder_sha256():
+    # Releases 0.8/0.9 used earlier fingerprints. This verified mapping accepts their
+    # original requests without overwriting historical implementation provenance.
+    legacy = {
+        "fe48aee9b30b0b70d0bf7974b45fc549c2a05625fbb4e99eec2bf85d261252b6": "9379e067aa64204104dc2b817f2f80c4a0a774fa518b767b45773bfc3844522a",
+        "7ad95a0934acce30a75a547b01e0f43a6ab14fc2bb82ef34a1b0a9fb8b7305d1": "9379e067aa64204104dc2b817f2f80c4a0a774fa518b767b45773bfc3844522a",
+    }
+    current = request_builder_sha256()
+    if stored is not None and stored[0] != current and legacy.get(stored[0]) != current:
         raise InputError(
             "Request-building code changed since this ledger was created. "
             "Collect/export existing work without submitting, or use a new ledger/name."
@@ -950,6 +984,7 @@ def annotate(
                 row_rejection = isinstance(exc, JevHTTPError) and exc.row_rejection
                 recorded = isinstance(exc, (ContractError, InputError)) or (
                     isinstance(exc, JevError)
+                    and not isinstance(exc, RetryDelayExceeded)
                     and (
                         not isinstance(exc, JevHTTPError)
                         or exc.status_code in {400, 413, 422}
@@ -1250,10 +1285,7 @@ def positive_float(value: str) -> float:
 def default_env_file() -> Path:
     """Use the checkout's .env from any working directory; installed copies use ./.env."""
 
-    checkout = Path(__file__).resolve().parents[2]
-    return (
-        checkout / ".env" if (checkout / "pyproject.toml").is_file() else Path(".env")
-    )
+    return project_root() / ".env"
 
 
 def resolve_env_file(path: Path | None) -> Path:
@@ -1268,6 +1300,8 @@ def resolve_env_file(path: Path | None) -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     """Expose one provider switch and explicit run/recovery controls."""
+    from .batch import DEFAULT_GOOGLE_MODEL, DEFAULT_OPENAI_MODEL
+
     parser = argparse.ArgumentParser(
         description="Annotate LOCUS with Typesafe (Jev), OpenAI Batch, or Google Batch."
     )
@@ -1283,7 +1317,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ledger",
         type=Path,
-        help="SQLite run ledger; default runs/locus_<provider>.sqlite3.",
+        help="SQLite run ledger; defaults to the checkout's runs/locus_<provider>.sqlite3 (working directory for installed wheels).",
     )
     parser.add_argument(
         "--output", type=Path, help="Optional augmented JSONL export path."
@@ -1346,7 +1380,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         type=model_id,
-        help="Provider model; defaults are documented in README.",
+        help=f"Model override. Defaults: typesafe {DEFAULT_MODEL}; openai {DEFAULT_OPENAI_MODEL}; google {DEFAULT_GOOGLE_MODEL}.",
     )
     parser.add_argument(
         "--max-output-tokens",
@@ -1481,7 +1515,9 @@ def _main(argv, *, stop_event, expected_input_sha256):
     """Dispatch one operation while the public entry point owns cancellation."""
     check_cancelled(stop_event)
     args = build_parser().parse_args(argv)
-    args.ledger = args.ledger or Path(f"runs/locus_{args.provider}.sqlite3")
+    args.ledger = (
+        args.ledger or project_root() / "runs" / f"locus_{args.provider}.sqlite3"
+    )
     try:
         args.env_file = resolve_env_file(args.env_file)
         if args.retry_failed and (args.export_only or args.dry_run):

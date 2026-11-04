@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neurips2026-locus"
-version = "0.8.0"
+version = "0.9.1"
+description = "Run one legal-text annotation provider on human_audit or LOCUS."
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
@@ -22,3 +23,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "neurips2026_locus.municipal_law_annotation" = ["*.txt", "*.json"]
+
+[tool.black]
+target-version = ["py310"]
+line-length = 88
+# These supplied policy files are covered by byte-for-byte fingerprints.
+extend-exclude = '/src/neurips2026_locus/municipal_law_annotation/'

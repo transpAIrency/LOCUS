@@ -27,11 +27,11 @@ from .contract import (
     example_overlap,
 )
 from .municipal_law_annotation.municipal_law_jev_adapter import build_jev_request
+from .files import project_root
 
 # Source checkouts use their own data/runs directories. Installed wheels use
 # the working directory, where the caller supplies the external data files.
-_CHECKOUT = Path(__file__).resolve().parents[2]
-ROOT = _CHECKOUT if (_CHECKOUT / "pyproject.toml").is_file() else Path.cwd()
+ROOT = project_root()
 
 PROVIDERS = ("typesafe", "openai", "google")
 SDK_MODULES = {"typesafe": "httpx", "openai": "openai", "google": "google.genai"}
@@ -61,9 +61,13 @@ def parse_args(argv=None):
     )
     parser.add_argument("--env-file", type=Path)
     parser.add_argument(
+        "--api-key-env",
+        help="Use only this named environment variable for the selected provider's key.",
+    )
+    parser.add_argument(
         "--model",
         type=pipeline.model_id,
-        help="Override only the selected provider's model; see README for defaults.",
+        help=f"Model override. Defaults: typesafe {jev.DEFAULT_MODEL}; openai {batch.DEFAULT_OPENAI_MODEL}; google {batch.DEFAULT_GOOGLE_MODEL}.",
     )
     parser.add_argument(
         "--expect-rows",
@@ -106,6 +110,12 @@ def parse_args(argv=None):
         help="Check every input row, selection, policy, and existing ledgers; no writes or API calls.",
     )
     args = parser.parse_args(argv)
+    if args.api_key_env is not None and not re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*", args.api_key_env
+    ):
+        raise pipeline.InputError(
+            "--api-key-env must name an environment variable, not contain an API key"
+        )
     if args.dataset == "LOCUS" and args.input is None:
         parser.error("LOCUS requires --input /absolute/path/to/original.jsonl")
     if args.dataset == "human_audit" and args.expect_rows not in (None, 250):
@@ -157,6 +167,8 @@ def arguments(args):
     # The default .env may be absent when keys/model IDs come from the shell.
     if args.env_file.is_file():
         result += ["--env-file", str(args.env_file)]
+    if args.api_key_env is not None:
+        result += ["--api-key-env", args.api_key_env]
     if args.max_text_chars is not None:
         result += ["--max-text-chars", str(args.max_text_chars)]
     if args.provider == "typesafe":
@@ -200,9 +212,9 @@ def preflight(args, stop_event=None):
                 f"Install the {provider} dependency into this Python environment: pip install -e '.[{provider}]'"
             )
         if provider == "typesafe":
-            jev.get_api_key()
+            jev.get_api_key(args.api_key_env)
         else:
-            batch.api_key(provider, None)
+            batch.api_key(provider, args.api_key_env)
     rows, first = 0, None
     total_characters, maximum_characters, truncated_rows = 0, 0, 0
     audit_ids = set()

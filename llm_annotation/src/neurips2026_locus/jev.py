@@ -21,10 +21,15 @@ from .contract import decode_json
 
 DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MODEL = "jev-1.14.0"
+MAX_RETRY_DELAY_SECONDS = 60.0
 
 
 class JevError(RuntimeError):
     """An API request failed or did not return a typed JSON response."""
+
+
+class RetryDelayExceeded(JevError):
+    """Stop a run when the server asks for a wait beyond the local retry budget."""
 
 
 class JevHTTPError(JevError):
@@ -68,8 +73,8 @@ def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
 
 
 def retry_delay(headers: Mapping[str, str], attempt: int) -> float:
-    """Respect Retry-After; otherwise use bounded exponential backoff."""
-    retry_after = headers.get("Retry-After")
+    """Honor short Retry-After delays; stop rather than retry early on longer ones."""
+    retry_after = headers.get("Retry-After") or headers.get("retry-after")
     if retry_after:
         try:
             delay = float(retry_after)
@@ -81,6 +86,10 @@ def retry_delay(headers: Mapping[str, str], attempt: int) -> float:
                 delay = (deadline - datetime.now(timezone.utc)).total_seconds()
             except (TypeError, ValueError, OverflowError):
                 delay = math.nan
+        if delay > MAX_RETRY_DELAY_SECONDS:
+            raise RetryDelayExceeded(
+                f"Server retry delay exceeds the {MAX_RETRY_DELAY_SECONDS:g}-second local limit; resume later."
+            )
         if math.isfinite(delay):
             return max(0.0, delay)
     return min(2.0 ** (attempt - 1), 30.0)
@@ -159,8 +168,8 @@ def get_api_key(preferred_name: str | None = None) -> tuple[str, str]:
 class JevClient:
     """One thread-safe connection pool shared by the bounded row workers.
 
-    HTTPX is imported only when creating a live client. Evaluation and offline
-    request construction remain available without provider dependencies.
+    HTTPX is imported only when creating a live client. Offline request
+    construction remains available without provider dependencies.
     ``transport`` permits complete offline HTTP tests with MockTransport.
     Close this client only after its worker pool has finished.
     """
@@ -265,6 +274,8 @@ class JevClient:
                         except (ValueError, UnicodeError):
                             pass
                         raise JevHTTPError(status, error_code)
+                    if self.stop_event is not None and self.stop_event.is_set():
+                        raise CancelledError()
                     delay = retry_delay(response.headers, attempt)
                     if self.stop_event is None:
                         time.sleep(delay)

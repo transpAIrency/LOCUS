@@ -34,7 +34,7 @@ from .generative import (
     contract_hash,
     parse_classification,
 )
-from .jev import DEFAULT_ENDPOINT, load_dotenv, retry_delay
+from .jev import DEFAULT_ENDPOINT, JevError, load_dotenv, retry_delay
 from .files import file_stamp
 from .pipeline import (
     AnnotationLedger,
@@ -105,6 +105,7 @@ def retry_provider_read(
                         break
             if not transient or attempt == 3:
                 raise
+            check_cancelled(stop_event)
             delay = retry_delay(getattr(response, "headers", None) or {}, attempt)
             print(
                 json.dumps(
@@ -868,7 +869,7 @@ def run(args, *, stop_event=None, expected_input_sha256: str | None = None) -> i
                                         }
                                     )
                                 )
-                    except (InputError, ContractError, CancelledError):
+                    except (InputError, ContractError, CancelledError, JevError):
                         raise
                     except Exception as exc:
                         raise InputError(

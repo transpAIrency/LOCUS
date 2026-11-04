@@ -1,0 +1,4 @@
+include .env.example .gitignore .gitattributes
+include data/benchmark/text_250.jsonl
+include run_model.py
+recursive-include tests *.py

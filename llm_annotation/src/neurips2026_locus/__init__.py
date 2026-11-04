@@ -1,4 +1,4 @@
-"""Municipal-law annotation and evaluation across Typesafe, OpenAI, and Google."""
+"""Municipal-law annotation with Typesafe, OpenAI, or Google."""
 
 from .contract import PRIMARY_FUNCTIONS, SUB_CATEGORIES
 
