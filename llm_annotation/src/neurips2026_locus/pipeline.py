@@ -48,6 +48,7 @@ from .jev import (
     JevError,
     JevHTTPError,
     JevResponse,
+    JevResponseError,
     RetryDelayExceeded,
     get_api_key,
     load_dotenv,
@@ -231,6 +232,12 @@ def _public_document_collection(record: Mapping[str, Any]) -> str:
             return "original"
         if isinstance(value, str) and value in {"additional", "ocr_addition"}:
             return "ocr_addition"
+    locator = _source_document_path(record) or record.get("document_id")
+    if isinstance(locator, str) and re.fullmatch(
+        r"(?:new|fixes)/[^/]+/[a-zA-Z]{2}/(?:charters/)?[^/]+\.pdf",
+        canonical_document_locator(locator),
+    ):
+        return "ocr_addition"
     return "original"
 
 
@@ -262,6 +269,27 @@ def _is_source_path(value: Any) -> bool:
             r"\.(?:jsonl?|pdf|txt|csv|xlsx?|xml|md|docx?|zip)(?:$|[#:])", value, re.I
         )
     )
+
+
+def _source_document_path(record: Mapping[str, Any]) -> str | None:
+    """Use the sanitizer's existing precedence for one collected locator."""
+    for field in (
+        "source_file",
+        "source_path",
+        "corpus_path",
+        "pdf_path",
+        "source_pdf",
+    ):
+        value = record.get(field)
+        if isinstance(value, str) and value and not _is_web_url(value):
+            return value
+    for field, value in record.items():
+        if field in _SOURCE_PATH_FIELDS:
+            if isinstance(value, str) and value and not _is_web_url(value):
+                return value
+        elif _is_locator_metadata_key(field) and _is_source_path(value):
+            return value
+    return None
 
 
 def public_source_record(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -304,26 +332,15 @@ def public_source_record(record: Mapping[str, Any]) -> dict[str, Any]:
                 keyed_values[public_key] = item
             value = keyed_values
         result: dict[str, Any] = {}
-        source_document = next(
-            (
-                value[key]
-                for key in (
-                    "source_file",
-                    "source_path",
-                    "corpus_path",
-                    "pdf_path",
-                    "source_pdf",
-                )
-                if isinstance(value.get(key), str)
-                and value[key]
-                and not _is_web_url(value[key])
-            ),
-            None,
-        )
+        source_document = _source_document_path(value)
         for key, item in value.items():
-            if key in {"header", "content", "classification"} or key.startswith(
-                "classification_"
-            ):
+            # A heading hierarchy is legal text, including path-like headings.
+            if key in {
+                "header",
+                "heading_path",
+                "content",
+                "classification",
+            } or key.startswith("classification_"):
                 result[key] = item
             elif key in {"source_document_slug", "source_document_slugs"}:
                 continue
@@ -374,12 +391,13 @@ def public_source_locator(
 ) -> dict[str, Any]:
     """Publish a minimized locator while leaving the private hash basis intact."""
     locator = source_locator(record, source_index)
-    if any(
+    collection = _public_document_collection(record)
+    if collection == "ocr_addition" or any(
         isinstance(record.get(field), str)
         and record[field] in {"original", "additional", "ocr_addition"}
         for field in ("collection", "origin")
     ):
-        locator["collection"] = _public_document_collection(record)
+        locator["collection"] = collection
     return public_source_record(locator)
 
 
@@ -972,6 +990,7 @@ def annotate(
             timeout_seconds=timeout_seconds,
             max_attempts=max_attempts,
             stop_event=stop_event,
+            retry_rate_limits=True,
         )
     except BaseException:
         ledger.close()
@@ -1008,13 +1027,8 @@ def annotate(
                 continue
             except Exception as exc:
                 row_rejection = isinstance(exc, JevHTTPError) and exc.row_rejection
-                recorded = isinstance(exc, (ContractError, InputError)) or (
-                    isinstance(exc, JevError)
-                    and not isinstance(exc, RetryDelayExceeded)
-                    and (
-                        not isinstance(exc, JevHTTPError)
-                        or exc.status_code in {400, 413, 422}
-                    )
+                recorded = (
+                    isinstance(exc, (ContractError, JevResponseError)) or row_rejection
                 )
                 if recorded:
                     ledger.insert(
@@ -1050,7 +1064,7 @@ def annotate(
                     )
                 consecutive_rejections += 1
                 if first_failure is None and (
-                    not row_rejection
+                    not recorded
                     or consecutive_rejections >= MAX_CONSECUTIVE_REJECTIONS
                 ):
                     first_failure = InputError(
@@ -1085,6 +1099,21 @@ def annotate(
             last_progress = now
 
     try:
+        if retry_failed:
+            with ledger.connection:
+                if ledger.connection.execute(
+                    "SELECT 1 FROM annotations WHERE status='failed' LIMIT 1"
+                ).fetchone():
+                    previous = ledger.connection.execute(
+                        "SELECT value FROM metadata WHERE key='row_retry_passes'"
+                    ).fetchone()
+                    passes = int(previous[0]) if previous else 0
+                    if passes < 0:
+                        raise InputError("Ledger contains an invalid row retry counter")
+                    ledger.connection.execute(
+                        "INSERT OR REPLACE INTO metadata VALUES ('row_retry_passes', ?)",
+                        (str(passes + 1),),
+                    )
         with ThreadPoolExecutor(
             max_workers=workers, thread_name_prefix="locus-jev"
         ) as executor:
@@ -1198,7 +1227,37 @@ def annotate(
     return counts
 
 
-def export_augmented_jsonl(
+def public_annotation_identifiers(
+    record: Mapping[str, Any], source_index: int, source_id: str
+) -> dict[str, Any]:
+    """Identify one section without repeating its legal text or source metadata."""
+    context = {
+        field: value
+        for field, value in record.items()
+        if field in _PUBLIC_ID_FIELDS
+        or (field in {"collection", "origin"} and isinstance(value, str))
+        or (
+            isinstance(value, str)
+            and (field in _SOURCE_PATH_FIELDS or _is_locator_metadata_key(field))
+        )
+    }
+    public = public_source_record(context)
+    identifiers = {
+        field: public[field]
+        for field in ("document_id", "audit_id", "custom_id", "source_record_id")
+        if isinstance(public.get(field), str) and public[field].strip()
+    }
+    if "document_id" in identifiers:
+        if type(record.get("index")) is int:
+            identifiers["index"] = record["index"]
+        else:
+            identifiers["input_row_index"] = source_index
+    elif "audit_id" not in identifiers:
+        identifiers.update(source_id=source_id, input_row_index=source_index)
+    return identifiers
+
+
+def export_annotations_jsonl(
     *,
     input_path: Path,
     ledger_path: Path,
@@ -1208,7 +1267,7 @@ def export_augmented_jsonl(
     overwrite: bool,
     annotation_field: str = "classification_jev",
 ) -> dict[str, int]:
-    """Export exactly the ledger's selection with the declared provider field.
+    """Export section identifiers and annotations for exactly the ledger selection.
 
     A bounded first-N run is complete when those selected rows are complete;
     rows beyond its immutable selection are not missing annotations. A failed
@@ -1277,11 +1336,13 @@ def export_augmented_jsonl(
                     ):
                         counts["excluded_header_only"] += 1
                         continue
-                    augmented = public_source_record(record)
-                    augmented[annotation_field] = _public_annotation(
+                    exported = public_annotation_identifiers(
+                        record, source_index, source_id
+                    )
+                    exported[annotation_field] = _public_annotation(
                         annotation, record, source_index
                     )
-                    handle.write(canonical_json(augmented) + "\n")
+                    handle.write(canonical_json(exported) + "\n")
                     counts["exported"] += 1
             if file_stamp(input_path) != before:
                 raise InputError(
@@ -1346,7 +1407,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="SQLite run ledger; defaults to the checkout's runs/locus_<provider>.sqlite3 (working directory for installed wheels).",
     )
     parser.add_argument(
-        "--output", type=Path, help="Optional augmented JSONL export path."
+        "--output", type=Path, help="Optional identifiers-and-annotations JSONL export path."
     )
     parser.add_argument(
         "--resume", action="store_true", help="Continue an existing compatible ledger."
@@ -1430,13 +1491,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--batch-size",
         type=positive_int,
         default=DEFAULT_BATCH_SIZE,
-        help="Requests per uploaded shard; maximum 5000.",
+        help="Requests per uploaded shard; maximum 50000 (default 5000).",
     )
     parser.add_argument(
         "--max-inflight-batches",
         type=positive_int,
         default=DEFAULT_MAX_INFLIGHT,
         help="Maximum active remote jobs per provider (default 1).",
+    )
+    parser.add_argument(
+        "--cleanup-remote-files",
+        action="store_true",
+        help="Google only: delete this run's input and result files after durable collection.",
     )
     parser.add_argument(
         "--batch-number",
@@ -1565,6 +1631,7 @@ def _main(argv, *, stop_event, expected_input_sha256):
                     args.max_output_tokens,
                     args.batch_number,
                     args.batch_id,
+                    args.cleanup_remote_files,
                 )
             )
             or args.batch_size != DEFAULT_BATCH_SIZE
@@ -1591,7 +1658,7 @@ def _main(argv, *, stop_event, expected_input_sha256):
         if args.export_only:
             if args.output is None:
                 raise InputError("--export-only requires --output")
-            counts = export_augmented_jsonl(
+            counts = export_annotations_jsonl(
                 input_path=args.input,
                 ledger_path=args.ledger,
                 output_path=args.output,
@@ -1637,7 +1704,7 @@ def _main(argv, *, stop_event, expected_input_sha256):
         )
         check_cancelled(stop_event)
         if args.output and (not counts["failed"] or args.allow_partial_export):
-            export_counts = export_augmented_jsonl(
+            export_counts = export_annotations_jsonl(
                 input_path=args.input,
                 ledger_path=args.ledger,
                 output_path=args.output,

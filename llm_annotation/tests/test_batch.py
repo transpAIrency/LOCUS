@@ -29,9 +29,13 @@ class FakeBatchService:
         self.jobs = {}
         self.submissions = 0
         self.fail_submit_once = False
+        self.google_file_ids = False
+        self.deleted_files = []
 
     def upload(self, path):
         file_id = f"input-{len(self.uploads) + 1}"
+        if self.google_file_ids:
+            file_id = "files/" + file_id
         self.uploads[file_id] = [
             json.loads(line) for line in path.read_text().splitlines()
         ]
@@ -101,7 +105,9 @@ class FakeBatchService:
                 "status": "completed",
                 "done": True,
                 "failed": False,
-                "output_files": [job_id + "-results"],
+                "output_files": [
+                    ("files/" if self.google_file_ids else "") + job_id + "-results"
+                ],
                 "error_files": [],
                 "display_name": display_name,
                 "input_file_id": file_id if self.provider == "openai" else None,
@@ -118,13 +124,65 @@ class FakeBatchService:
         return dict(self.jobs[job_id]["status"])
 
     def iter_results(self, file_id):
-        yield from self.jobs[file_id.removesuffix("-results")]["results"]
+        job_id = file_id.removeprefix("files/").removesuffix("-results")
+        yield from self.jobs[job_id]["results"]
+
+    def delete_file(self, file_id):
+        self.deleted_files.append(file_id)
 
     def close(self):
         pass
 
 
 class BatchTests(unittest.TestCase):
+    @staticmethod
+    def quota_rejection(provider, *, token_queue=False):
+        message = (
+            "Enqueued token limit reached; wait for existing batch jobs to finish."
+            if token_queue
+            else "Too many requests per minute."
+        )
+        rejection = RuntimeError(message)
+        setattr(rejection, "status_code" if provider == "openai" else "code", 429)
+        rejection.body = {
+            "error": {
+                "code": (
+                    "token_limit_exceeded" if token_queue else "rate_limit_exceeded"
+                ),
+                "message": message,
+            }
+        }
+        rejection.request_id = "quota-request-fixture"
+        rejection.response = httpx.Response(
+            429,
+            headers={"Retry-After": "60", "x-request-id": "quota-request-fixture"},
+        )
+        return rejection
+
+    def test_provider_error_context_keeps_model_guidance_and_scrubs_credentials(self):
+        error = RuntimeError("opaque SDK exception")
+        error.status_code = 400
+        error.request_id = "request-fixture"
+        error.body = {
+            "error": {
+                "code": "invalid_model",
+                "message": (
+                    "Model fixture-unavailable does not support batch processing. "
+                    "API key: sk-fixture-secret-value; "
+                    "Authorization: Bearer fixture-bearer-secret. " + "x" * 1000
+                ),
+            }
+        }
+        details = batch.provider_error_details(error)
+        self.assertEqual(details["http_status"], 400)
+        self.assertEqual(details["code"], "invalid_model")
+        self.assertEqual(details["request_id"], "request-fixture")
+        self.assertIn("fixture-unavailable", details["message"])
+        self.assertIn("does not support batch", details["message"])
+        self.assertNotIn("sk-fixture-secret-value", details["message"])
+        self.assertNotIn("fixture-bearer-secret", details["message"])
+        self.assertLessEqual(len(details["message"]), 600)
+
     def test_legacy_prompt_prepared_batches_keep_their_requests_and_resume(self):
         from test_pipeline import (
             convert_fixture_to_legacy_prompt_ledger,
@@ -438,6 +496,9 @@ class BatchTests(unittest.TestCase):
                 ]
                 self.assertEqual([row["audit_id"] for row in rows], ["row-0", "row-1"])
                 for row in rows:
+                    self.assertEqual(
+                        set(row), {"audit_id", f"classification_{provider}"}
+                    )
                     annotation = row[f"classification_{provider}"]
                     self.assertEqual(
                         annotation["final"],
@@ -465,6 +526,8 @@ class BatchTests(unittest.TestCase):
             ):
                 service, _ = self.fixture(Path(temporary), provider, count=3)
                 self.run_action("submit", resume=False)
+                with closing(sqlite3.connect(self.ledger)) as db:
+                    self.assertEqual(batch.summary(db)["retry_passes"], 0)
                 results = service.jobs["job-1"]["results"]
                 results.pop()
                 key = "custom_id" if provider == "openai" else "key"
@@ -479,14 +542,33 @@ class BatchTests(unittest.TestCase):
                     ),
                     [(2,)],
                 )
-                self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(1,)])
-                with self.assertRaisesRegex(pipeline.InputError, "incomplete"):
-                    self.run_action("prepare", "--output", str(self.output))
-                self.assertFalse(self.output.exists())
-                self.run_action(
-                    "prepare", "--output", str(self.output), "--allow-partial-export"
+                self.assertEqual(
+                    self.query(
+                        "SELECT status,COUNT(*) FROM annotations GROUP BY status "
+                        "ORDER BY status"
+                    ),
+                    [("annotated", 1), ("failed", 2)],
                 )
+                self.assertEqual(
+                    self.run_action("prepare", "--output", str(self.output)),
+                    batch.ROW_ERRORS_EXIT_CODE,
+                )
+                self.assertFalse(self.output.exists())
+                with self.assertRaisesRegex(pipeline.InputError, "failed"):
+                    self.run_action(
+                        "prepare", "--output", str(self.output), "--export-only"
+                    )
+                with patch("sys.stdout", new=io.StringIO()) as output:
+                    self.run_action(
+                        "prepare",
+                        "--output",
+                        str(self.output),
+                        "--allow-partial-export",
+                    )
                 self.assertEqual(len(self.output.read_text().splitlines()), 1)
+                exported = json.loads(output.getvalue().splitlines()[-1])["export"]
+                self.assertEqual(exported["failed"], 2)
+                self.assertEqual(exported["missing"], 0)
 
     def test_interrupted_result_stream_retries_after_rollback_without_new_model_work(
         self,
@@ -536,12 +618,27 @@ class BatchTests(unittest.TestCase):
                     with (
                         patch.object(service, "status", side_effect=error) as get,
                         patch.object(batch.time, "sleep") as sleep,
+                        patch.object(
+                            batch.time,
+                            "time",
+                            return_value=1000 if status == 503 else 10000,
+                        ),
                     ):
-                        with self.assertRaises(pipeline.InputError) as caught:
-                            self.run_action("status")
+                        if status == 503:
+                            with patch("sys.stdout", new=io.StringIO()) as output:
+                                self.assertEqual(
+                                    self.run_action("status"),
+                                    batch.RETRYABLE_OPERATION_EXIT_CODE,
+                                )
+                            self.assertNotIn("private-test-key", output.getvalue())
+                        else:
+                            with self.assertRaises(pipeline.InputError) as caught:
+                                self.run_action("status")
+                            self.assertNotIn(
+                                "private-test-key", str(caught.exception)
+                            )
                     self.assertEqual(get.call_count, attempts)
                     self.assertEqual(sleep.call_count, attempts - 1)
-                    self.assertNotIn("private-test-key", str(caught.exception))
                 self.assertEqual(service.submissions, 1)
                 self.assertEqual(
                     self.query("SELECT state FROM batch_jobs"), [("submitted",)]
@@ -678,11 +775,40 @@ class BatchTests(unittest.TestCase):
             ):
                 batch.api_key("google", None)
 
+    def test_server_error_after_creation_is_uncertain_and_never_auto_reposted(self):
+        for provider, attribute in (("openai", "status_code"), ("google", "code")):
+            with (
+                self.subTest(provider=provider),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                service, _ = self.fixture(Path(temporary), provider)
+                submit = service.submit
+
+                def accepted_then_failed(*args):
+                    submit(*args)
+                    error = RuntimeError("The create response failed after acceptance")
+                    setattr(error, attribute, 500)
+                    raise error
+
+                with patch.object(service, "submit", side_effect=accepted_then_failed):
+                    with self.assertRaises(pipeline.InputError):
+                        self.run_action("submit", resume=False)
+                self.assertEqual(
+                    self.query("SELECT state,remote_id FROM batch_jobs"),
+                    [("submitting", None)],
+                )
+                with self.assertRaisesRegex(
+                    pipeline.InputError, "uncertain submission"
+                ):
+                    self.run_action("submit")
+                self.assertEqual(service.submissions, 1)
+                self.assertEqual(len(service.uploads), 1)
+
     def test_definite_create_rejections_do_not_require_an_impossible_remote_attachment(
         self,
     ):
         for provider, attribute in (("openai", "status_code"), ("google", "code")):
-            for code in (400, 429):
+            for code in (400,):
                 with (
                     self.subTest(provider=provider, code=code),
                     tempfile.TemporaryDirectory() as temporary,
@@ -692,15 +818,390 @@ class BatchTests(unittest.TestCase):
                     setattr(rejection, attribute, code)
                     with patch.object(service, "submit", side_effect=rejection):
                         with self.assertRaisesRegex(
-                            pipeline.InputError, f"HTTP {code}"
-                        ):
+                            pipeline.InputError, "rejected batch"
+                        ) as raised:
                             self.run_action("submit", resume=False)
+                    self.assertIn(f'"http_status":{code}', str(raised.exception))
                     self.assertEqual(
                         self.query("SELECT state FROM batch_jobs"), [("preparing",)]
                     )
                     self.assertEqual(self.run_action("submit"), 0)
                     self.assertEqual(self.run_action("collect"), 0)
                     self.assertEqual(service.submissions, 1)
+
+    def test_definite_quota_rejection_waits_then_reuses_uploaded_file_once(self):
+        for provider in ("openai", "google"):
+            with (
+                self.subTest(provider=provider),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                service, _ = self.fixture(Path(temporary), provider)
+                with patch.object(batch.time, "time", return_value=1000):
+                    with patch.object(
+                        service, "submit", side_effect=self.quota_rejection(provider)
+                    ) as submit:
+                        self.assertEqual(self.run_action("submit", resume=False), 0)
+                    self.assertEqual(submit.call_count, 1)
+                    self.assertEqual(
+                        self.query("SELECT state,file_id FROM batch_jobs"),
+                        [("quota_wait", "input-1")],
+                    )
+                    assigned = self.query(
+                        "SELECT id,job_number FROM batch_requests ORDER BY id"
+                    )
+                    self.assertTrue(all(number == 1 for _, number in assigned))
+                    quota = json.loads(
+                        self.query(
+                            "SELECT value FROM metadata WHERE key='batch_quota:1'"
+                        )[0][0]
+                    )
+                    self.assertGreaterEqual(quota["retry_at"], 1060)
+                    self.assertEqual(quota["attempts"], 1)
+                    self.assertFalse(quota["shrink"])
+                    self.assertEqual(quota["error"]["http_status"], 429)
+                    self.assertEqual(quota["error"]["code"], "rate_limit_exceeded")
+                    self.assertEqual(
+                        quota["error"]["request_id"], "quota-request-fixture"
+                    )
+                    with closing(sqlite3.connect(self.ledger)) as db:
+                        progress = batch.summary(db)
+                    self.assertEqual(len(progress["deferred_jobs"]), 1)
+                    self.assertIsNotNone(progress["next_retry_at_utc"])
+                    with patch.object(service, "submit") as submit:
+                        self.assertEqual(self.run_action("submit"), 0)
+                        submit.assert_not_called()
+                    self.assertEqual(
+                        self.query(
+                            "SELECT id,job_number FROM batch_requests ORDER BY id"
+                        ),
+                        assigned,
+                    )
+                self.assertEqual(len(service.uploads), 1)
+                self.assertEqual(service.submissions, 0)
+                with patch.object(
+                    batch.time, "time", return_value=quota["retry_at"] + 1
+                ):
+                    self.assertEqual(self.run_action("submit"), 0)
+                self.assertEqual(len(service.uploads), 1)
+                self.assertEqual(service.submissions, 1)
+                self.assertEqual(
+                    self.query("SELECT state,remote_id FROM batch_jobs"),
+                    [("submitted", "job-1")],
+                )
+                self.assertEqual(self.run_action("collect"), 0)
+                self.assertEqual(self.run_action("submit"), 0)
+                self.assertEqual(service.submissions, 1)
+                self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(2,)])
+
+    def test_rejected_token_queue_shard_shrinks_without_duplicate_accepted_rows(self):
+        for provider in ("openai", "google"):
+            with (
+                self.subTest(provider=provider),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                service, _ = self.fixture(Path(temporary), provider, count=4)
+                with (
+                    patch.object(batch.time, "time", return_value=1000),
+                    patch.object(
+                        service,
+                        "submit",
+                        side_effect=self.quota_rejection(provider, token_queue=True),
+                    ),
+                ):
+                    self.assertEqual(self.run_action("submit", resume=False), 0)
+                quota = json.loads(
+                    self.query(
+                        "SELECT value FROM metadata WHERE key='batch_quota:1'"
+                    )[0][0]
+                )
+                self.assertTrue(quota["shrink"])
+                self.assertEqual(len(service.uploads["input-1"]), 4)
+                self.assertEqual(service.submissions, 0)
+                with patch.object(
+                    batch.time, "time", return_value=quota["retry_at"] + 1
+                ):
+                    self.assertEqual(self.run_action("submit"), 0)
+                self.assertEqual(len(service.uploads["input-2"]), 2)
+                self.assertEqual(
+                    self.query("SELECT state FROM batch_jobs ORDER BY number"),
+                    [("quota_split",), ("submitted",)],
+                )
+                self.assertEqual(self.run_action("collect"), 0)
+                self.assertEqual(self.run_action("submit"), 0)
+                self.assertEqual(len(service.uploads["input-3"]), 2)
+                self.assertEqual(self.run_action("collect"), 0)
+                key = "custom_id" if provider == "openai" else "key"
+                accepted_ids = [
+                    row[key]
+                    for file in ("input-2", "input-3")
+                    for row in service.uploads[file]
+                ]
+                self.assertEqual(len(accepted_ids), 4)
+                self.assertEqual(len(set(accepted_ids)), 4)
+                self.assertEqual(
+                    set(accepted_ids),
+                    {row[0] for row in self.query("SELECT id FROM batch_requests")},
+                )
+                self.assertEqual(service.submissions, 2)
+                self.assertEqual(
+                    self.query(
+                        "SELECT status,COUNT(*) FROM annotations GROUP BY status"
+                    ),
+                    [("annotated", 4)],
+                )
+
+    def test_manual_output_waits_for_batches_and_preserves_previous_output(self):
+        for provider in ("openai", "google"):
+            with (
+                self.subTest(provider=provider),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                service, _ = self.fixture(Path(temporary), provider)
+                self.assertEqual(
+                    self.run_action(
+                        "submit", "--output", str(self.output), resume=False
+                    ),
+                    0,
+                )
+                self.assertFalse(self.output.exists())
+                service.jobs["job-1"]["status"].update(
+                    status="in_progress", done=False
+                )
+                self.assertEqual(
+                    self.run_action("collect", "--output", str(self.output)), 0
+                )
+                self.assertFalse(self.output.exists())
+                self.output.write_text("previous complete export\n")
+                self.assertEqual(
+                    self.run_action(
+                        "collect",
+                        "--output",
+                        str(self.output),
+                        "--overwrite-output",
+                    ),
+                    0,
+                )
+                self.assertEqual(self.output.read_text(), "previous complete export\n")
+                service.jobs["job-1"]["status"].update(status="completed", done=True)
+                self.assertEqual(
+                    self.run_action(
+                        "collect",
+                        "--output",
+                        str(self.output),
+                        "--overwrite-output",
+                    ),
+                    0,
+                )
+                self.assertEqual(len(self.output.read_text().splitlines()), 2)
+                self.assertEqual(service.submissions, 1)
+
+    def test_single_row_token_quota_rejections_back_off_without_uploading_again(self):
+        for provider in ("openai", "google"):
+            with (
+                self.subTest(provider=provider),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                service, _ = self.fixture(Path(temporary), provider, count=1)
+                rejection = self.quota_rejection(provider, token_queue=True)
+                rejection.response = httpx.Response(429)
+                now = 1000
+                delays = []
+                for attempt in (1, 2):
+                    with (
+                        patch.object(batch.time, "time", return_value=now),
+                        patch.object(service, "submit", side_effect=rejection),
+                    ):
+                        self.assertEqual(
+                            self.run_action("submit", resume=attempt != 1), 0
+                        )
+                    quota = json.loads(
+                        self.query(
+                            "SELECT value FROM metadata WHERE key='batch_quota:1'"
+                        )[0][0]
+                    )
+                    self.assertEqual(quota["attempts"], attempt)
+                    delays.append(quota["retry_at"] - now)
+                    now = quota["retry_at"] + 1
+                self.assertGreaterEqual(delays[0], 60)
+                self.assertGreaterEqual(delays[1], 2 * delays[0])
+                self.assertEqual(len(service.uploads), 1)
+                self.assertEqual(service.submissions, 0)
+                with patch.object(batch.time, "time", return_value=now):
+                    self.assertEqual(self.run_action("submit"), 0)
+                self.assertEqual(len(service.uploads), 1)
+                self.assertEqual(service.submissions, 1)
+                self.assertEqual(self.run_action("collect"), 0)
+
+    def test_long_read_retry_after_embargo_blocks_remote_actions_until_due(self):
+        for provider in ("openai", "google"):
+            with (
+                self.subTest(provider=provider),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                service, constructor = self.fixture(Path(temporary), provider)
+                self.assertEqual(self.run_action("submit", resume=False), 0)
+                original_rows = self.query(
+                    "SELECT id,job_number,result_json,error FROM batch_requests "
+                    "ORDER BY id"
+                )
+                error = self.quota_rejection(provider)
+                error.response = httpx.Response(429, headers={"Retry-After": "3600"})
+                with patch.object(batch.time, "time", return_value=1000):
+                    with (
+                        patch.object(service, "status", side_effect=error) as status,
+                        patch.object(batch.time, "sleep") as sleep,
+                    ):
+                        self.assertEqual(
+                            self.run_action("collect"),
+                            batch.RETRYABLE_OPERATION_EXIT_CODE,
+                        )
+                    self.assertEqual(status.call_count, 1)
+                    sleep.assert_not_called()
+                    with closing(sqlite3.connect(self.ledger)) as db:
+                        progress = batch.summary(db)
+                    retry_at = progress["operation_retry_at"]
+                    self.assertGreaterEqual(retry_at, 4600)
+                    self.assertIsNotNone(progress["operation_retry_at_utc"])
+                    self.assertIsNone(progress["next_retry_at"])
+                    embargo = json.loads(
+                        self.query(
+                            "SELECT value FROM metadata WHERE key='batch_operation_retry'"
+                        )[0][0]
+                    )
+                    self.assertEqual(embargo["action"], "collect")
+                    before = constructor.call_count
+                    for action in ("collect", "status", "submit", "retry"):
+                        with self.subTest(deferred_action=action):
+                            self.assertEqual(
+                                self.run_action(action),
+                                batch.RETRYABLE_OPERATION_EXIT_CODE,
+                            )
+                    self.assertEqual(constructor.call_count, before)
+                self.assertEqual(
+                    self.query(
+                        "SELECT id,job_number,result_json,error FROM batch_requests "
+                        "ORDER BY id"
+                    ),
+                    original_rows,
+                )
+                self.assertEqual(
+                    self.query("SELECT state,remote_id FROM batch_jobs"),
+                    [("submitted", "job-1")],
+                )
+                self.assertEqual(service.submissions, 1)
+                with patch.object(batch.time, "time", return_value=retry_at + 1):
+                    self.assertEqual(self.run_action("collect"), 0)
+                self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(2,)])
+                with closing(sqlite3.connect(self.ledger)) as db:
+                    self.assertIsNone(batch.summary(db)["operation_retry_at"])
+                self.assertEqual(service.submissions, 1)
+
+    def test_google_cleanup_is_opt_in_and_limited_to_committed_job_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            service, _ = self.fixture(Path(temporary), "google")
+            service.google_file_ids = True
+            self.assertEqual(self.run_action("submit", resume=False), 0)
+            service.jobs["job-1"]["status"]["error_files"] = ["files/job-1-results"]
+            service.uploads["files/unrelated"] = []
+            self.assertEqual(self.run_action("collect"), 0)
+            self.assertEqual(service.deleted_files, [])
+            with closing(sqlite3.connect(self.ledger)) as db:
+                self.assertEqual(batch.summary(db)["pending_cleanup_files"], 2)
+            self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(2,)])
+            self.assertEqual(
+                self.run_action("collect", "--cleanup-remote-files"), 0
+            )
+            self.assertEqual(
+                set(service.deleted_files),
+                {"files/input-1", "files/job-1-results"},
+            )
+            self.assertEqual(len(service.deleted_files), 2)
+            with closing(sqlite3.connect(self.ledger)) as db:
+                self.assertEqual(batch.summary(db)["pending_cleanup_files"], 0)
+            self.assertEqual(
+                self.run_action("collect", "--cleanup-remote-files"), 0
+            )
+            self.assertEqual(len(service.deleted_files), 2)
+            self.assertEqual(service.submissions, 1)
+
+    def test_google_cleanup_never_runs_before_atomic_collection_commits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            service, _ = self.fixture(Path(temporary), "google")
+            service.google_file_ids = True
+            self.run_action("submit", resume=False)
+            results = service.jobs["job-1"]["results"]
+            results.append(dict(results[0]))
+            with self.assertRaisesRegex(pipeline.InputError, "duplicate"):
+                self.run_action("collect", "--cleanup-remote-files")
+            self.assertEqual(service.deleted_files, [])
+            self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(0,)])
+            self.assertEqual(
+                self.query(
+                    "SELECT COUNT(*) FROM metadata WHERE key LIKE 'batch_cleanup:%'"
+                ),
+                [(0,)],
+            )
+            results.pop()
+            self.assertEqual(
+                self.run_action("collect", "--cleanup-remote-files"), 0
+            )
+            self.assertEqual(len(service.deleted_files), 2)
+            self.assertEqual(service.submissions, 1)
+
+    def test_google_cleanup_failure_keeps_annotations_and_resumes_remaining_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            service, _ = self.fixture(Path(temporary), "google")
+            service.google_file_ids = True
+            self.run_action("submit", resume=False)
+            delete = service.delete_file
+
+            def delete_first_then_fail(file_id):
+                self.assertEqual(
+                    self.query("SELECT COUNT(*) FROM annotations"), [(2,)]
+                )
+                self.assertEqual(
+                    self.query("SELECT state FROM batch_jobs"), [("collected",)]
+                )
+                if service.deleted_files:
+                    raise httpx.ConnectTimeout("temporary deletion failure")
+                delete(file_id)
+
+            with (
+                patch.object(batch.time, "time", return_value=1000),
+                patch.object(batch.time, "sleep"),
+                patch.object(service, "delete_file", side_effect=delete_first_then_fail),
+            ):
+                self.assertEqual(
+                    self.run_action("collect", "--cleanup-remote-files"),
+                    batch.RETRYABLE_OPERATION_EXIT_CODE,
+                )
+            self.assertEqual(len(service.deleted_files), 1)
+            saved = self.query(
+                "SELECT source_id,annotation_json FROM annotations ORDER BY source_id"
+            )
+            cleanup = json.loads(
+                self.query("SELECT value FROM metadata WHERE key='batch_cleanup:1'")[0][0]
+            )
+            self.assertEqual(len(cleanup["pending"]), 1)
+            self.assertEqual(cleanup["deleted"], service.deleted_files)
+            with closing(sqlite3.connect(self.ledger)) as db:
+                progress = batch.summary(db)
+            self.assertEqual(progress["pending_cleanup_files"], 1)
+            with patch.object(
+                batch.time, "time", return_value=progress["operation_retry_at"] + 1
+            ):
+                self.assertEqual(
+                    self.run_action("collect", "--cleanup-remote-files"), 0
+                )
+            self.assertEqual(len(service.deleted_files), 2)
+            self.assertEqual(len(set(service.deleted_files)), 2)
+            self.assertEqual(
+                self.query(
+                    "SELECT source_id,annotation_json FROM annotations ORDER BY source_id"
+                ),
+                saved,
+            )
+            self.assertEqual(service.submissions, 1)
 
     def test_collection_preserves_paid_results_when_the_external_input_is_unavailable(
         self,
@@ -778,7 +1279,16 @@ class BatchTests(unittest.TestCase):
                     )
                     self.assertEqual(batch.run(args), 0)
                     self.assertFalse(self.ledger.exists())
-                    self.assertEqual(self.run_action("prepare", resume=False), 0)
+                    with self.assertRaisesRegex(pipeline.InputError, "50000"):
+                        self.run_action(
+                            "prepare", "--batch-size", "50001", resume=False
+                        )
+                    self.assertEqual(
+                        self.run_action(
+                            "prepare", "--batch-size", "50000", resume=False
+                        ),
+                        0,
+                    )
                 constructor.assert_not_called()
 
     def test_selected_maximum_stays_fixed_on_resume(self):
@@ -851,15 +1361,60 @@ class BatchTests(unittest.TestCase):
                 completed_before = self.query(
                     "SELECT id, result_json FROM batch_requests WHERE result_json IS NOT NULL ORDER BY id"
                 )
-                self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(2,)])
+                self.assertEqual(
+                    self.query(
+                        "SELECT COUNT(*) FROM annotations WHERE status='failed'"
+                    ),
+                    [(1,)],
+                )
+                completed_annotations = self.query(
+                    "SELECT source_id,annotation_json FROM annotations "
+                    "WHERE status='annotated' ORDER BY source_id"
+                )
+                self.assertEqual(len(completed_annotations), 2)
                 self.assertEqual(self.run_action("submit"), batch.ROW_ERRORS_EXIT_CODE)
                 self.assertEqual(service.submissions, 1)
-                self.assertEqual(self.run_action("retry"), 0)
+                with closing(sqlite3.connect(self.ledger)) as db, db:
+                    db.execute(
+                        "INSERT OR REPLACE INTO metadata VALUES (?, ?)",
+                        (
+                            "batch_operation_retry",
+                            json.dumps(
+                                {
+                                    "retry_at": 2000,
+                                    "attempts": 1,
+                                    "action": "collect",
+                                    "error": {},
+                                }
+                            ),
+                        ),
+                    )
+                with patch.object(batch.time, "time", return_value=1000):
+                    self.assertEqual(
+                        self.run_action("retry"), batch.RETRYABLE_OPERATION_EXIT_CODE
+                    )
+                with closing(sqlite3.connect(self.ledger)) as db:
+                    self.assertEqual(batch.summary(db)["retry_passes"], 0)
+                with patch.object(batch.time, "time", return_value=2001):
+                    self.assertEqual(self.run_action("retry"), 0)
+                with closing(sqlite3.connect(self.ledger)) as db:
+                    self.assertEqual(batch.summary(db)["retry_passes"], 1)
                 self.assertEqual(
                     [r[key_field] for r in service.uploads["input-2"]], [failed_id]
                 )
                 self.assertEqual(self.run_action("collect"), 0)
                 self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(3,)])
+                self.assertEqual(
+                    self.query(
+                        "SELECT COUNT(*) FROM annotations WHERE status='failed'"
+                    ),
+                    [(0,)],
+                )
+                after_annotations = dict(
+                    self.query("SELECT source_id,annotation_json FROM annotations")
+                )
+                for source_id, encoded in completed_annotations:
+                    self.assertEqual(after_annotations[source_id], encoded)
                 self.assertEqual(
                     self.query(
                         "SELECT COUNT(*) FROM batch_requests WHERE error IS NOT NULL"
@@ -875,6 +1430,8 @@ class BatchTests(unittest.TestCase):
                     self.assertEqual(completed_after[request_id], result)
                 self.assertEqual(self.run_action("retry"), 0)
                 self.assertEqual(service.submissions, 2)
+                with closing(sqlite3.connect(self.ledger)) as db:
+                    self.assertEqual(batch.summary(db)["retry_passes"], 1)
 
     def test_pending_status_and_collection_do_not_submit_or_mark_missing(self):
         for provider in ("openai", "google"):
@@ -908,6 +1465,29 @@ class BatchTests(unittest.TestCase):
                 status.update(status="completed", done=True)
                 self.assertEqual(self.run_action("collect"), 0)
                 self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(2,)])
+
+    def test_unknown_google_state_keeps_paid_job_and_actionable_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            service, _ = self.fixture(Path(temporary), "google")
+            self.assertEqual(self.run_action("submit", resume=False), 0)
+            failure = batch.google_batch.GoogleBatchStatusError(
+                "Google batch job-1 returned an unknown state; "
+                "check its provider status before resuming"
+            )
+            with patch.object(service, "status", side_effect=failure):
+                with self.assertRaises(pipeline.InputError) as raised:
+                    self.run_action("collect")
+            message = str(raised.exception)
+            for expected in ("job-1", "invalid_batch_status", "check its provider"):
+                self.assertIn(expected, message)
+            self.assertEqual(
+                self.query("SELECT state,remote_id FROM batch_jobs"),
+                [("submitted", "job-1")],
+            )
+            self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(0,)])
+            self.assertEqual(self.run_action("collect"), 0)
+            self.assertEqual(service.submissions, 1)
+            self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(2,)])
 
     def test_utf8_byte_budget_splits_shards_and_rejects_oversized_rows_before_calls(
         self,
@@ -1172,7 +1752,7 @@ class RunnerTests(unittest.TestCase):
                 after,
             )
 
-    def test_dataset_names_resolve_to_explicit_inputs_and_distinct_run_names(self):
+    def test_dataset_defaults_and_input_overrides_keep_distinct_run_names(self):
         (self.directory / "pyproject.toml").write_text("# Source-checkout marker\n")
         audit = self.runner.parse_args(
             ["human_audit", "--provider", "google", "--env-file", str(self.env)]
@@ -1188,20 +1768,110 @@ class RunnerTests(unittest.TestCase):
             ).resolve(),
         )
         self.assertEqual(audit.expect_rows, 250)
-        corpus = self.runner.parse_args(
-            [
-                "LOCUS",
-                "--provider",
-                "google",
-                "--input",
-                str(self.input),
-                "--env-file",
-                str(self.env),
-            ]
-        )
-        self.assertEqual(corpus.dataset, "LOCUS")
-        self.assertEqual(corpus.name, "LOCUS")
-        self.assertIsNone(corpus.expect_rows)
+        self.assertIsNone(audit.max_text_chars)
+        self.assertEqual(audit.batch_size, 5000)
+        self.assertEqual(audit.max_inflight_batches, 1)
+        self.assertEqual(audit.check_every, 0.5)
+        self.assertEqual(audit.workers, 4)
+        self.assertFalse(audit.cleanup_remote_files)
+        self.assertEqual(audit.max_retry_passes, 2)
+        self.assertNotIn("--max-text-chars", self.runner.arguments(audit))
+        for provider in self.runner.PROVIDERS:
+            with self.subTest(provider=provider):
+                arguments = [
+                    "LOCUS",
+                    "--provider",
+                    provider,
+                    "--env-file",
+                    str(self.env),
+                ]
+                corpus = self.runner.parse_args(arguments)
+                self.assertEqual(corpus.dataset, "LOCUS")
+                self.assertEqual(corpus.name, "LOCUS")
+                self.assertEqual(
+                    corpus.input,
+                    (
+                        self.directory / "data" / "locus_v1.1_harmonized.jsonl"
+                    ).resolve(),
+                )
+                self.assertIsNone(corpus.expect_rows)
+                self.assertEqual(corpus.max_text_chars, 16000)
+                self.assertEqual(corpus.batch_size, 50000)
+                self.assertEqual(
+                    corpus.max_inflight_batches,
+                    {"typesafe": 1, "openai": 256, "google": 100}[provider],
+                )
+                self.assertEqual(corpus.check_every, 0.5)
+                self.assertEqual(corpus.workers, 16)
+                self.assertFalse(corpus.cleanup_remote_files)
+                self.assertEqual(corpus.max_retry_passes, 2)
+                no_retries = self.runner.parse_args(
+                    [*arguments, "--max-retry-passes", "0"]
+                )
+                self.assertEqual(no_retries.max_retry_passes, 0)
+                with self.assertRaises(SystemExit):
+                    self.runner.parse_args([*arguments, "--max-retry-passes", "-1"])
+                forwarded = self.runner.arguments(corpus)
+                self.assertNotIn("--cleanup-remote-files", forwarded)
+                self.assertEqual(
+                    forwarded[forwarded.index("--max-text-chars") + 1], "16000"
+                )
+                if provider != "typesafe":
+                    self.assertNotIn("--workers", forwarded)
+                else:
+                    self.assertEqual(
+                        forwarded[forwarded.index("--workers") + 1], "16"
+                    )
+                if provider == "google":
+                    cleanup = self.runner.parse_args(
+                        [*arguments, "--cleanup-remote-files"]
+                    )
+                    self.assertIn(
+                        "--cleanup-remote-files", self.runner.arguments(cleanup)
+                    )
+                else:
+                    with self.assertRaises(SystemExit):
+                        self.runner.parse_args([*arguments, "--cleanup-remote-files"])
+                override = self.runner.parse_args(
+                    [
+                        *arguments,
+                        "--input",
+                        str(self.input),
+                        "--max-text-chars",
+                        "8000",
+                        "--batch-size",
+                        "123",
+                        "--max-inflight-batches",
+                        "3",
+                        "--check-every",
+                        "2",
+                        "--workers",
+                        "7",
+                    ]
+                )
+                self.assertEqual(override.input, self.input.resolve())
+                self.assertEqual(override.max_text_chars, 8000)
+                self.assertEqual(override.batch_size, 123)
+                self.assertEqual(override.max_inflight_batches, 3)
+                self.assertEqual(override.check_every, 2)
+                self.assertEqual(override.workers, 7)
+                forwarded = self.runner.arguments(override)
+                self.assertEqual(
+                    forwarded[forwarded.index("--max-text-chars") + 1], "8000"
+                )
+                work_dir = (self.directory / "external-state").resolve()
+                relocated = self.runner.parse_args(
+                    [*arguments, "--work-dir", str(work_dir)]
+                )
+                self.assertEqual(relocated.input, corpus.input)
+                self.assertEqual(
+                    self.runner.ledger_path(relocated),
+                    work_dir / "runs" / f"LOCUS_{provider}.sqlite3",
+                )
+                self.assertEqual(
+                    self.runner.output_path(relocated),
+                    work_dir / "outputs" / f"LOCUS_{provider}.jsonl",
+                )
         for bad in ("sample", "corpus", "unknown"):
             with self.subTest(dataset=bad), self.assertRaises(SystemExit):
                 self.runner.parse_args([bad])
@@ -1290,9 +1960,12 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.jev_client.instances, [])
         self.assertEqual(self.google.submissions, 1)
 
-    def test_failed_rows_require_explicit_retry_and_collection_failure_cannot_submit(
+    def test_disabled_auto_retry_allows_manual_retry_but_not_after_collection_failure(
         self,
     ):
+        arguments = [
+            *self.args, "--provider", "openai", "--max-retry-passes", "0"
+        ]
         submit = self.openai.submit
 
         def fail_one(*args):
@@ -1305,11 +1978,11 @@ class RunnerTests(unittest.TestCase):
             return job_id
 
         with patch.object(self.openai, "submit", side_effect=fail_one):
-            self.assertEqual(self.runner.main([*self.args, "--provider", "openai"]), 2)
+            self.assertEqual(self.runner.main(arguments), 2)
         self.assertEqual(self.google.submissions, 0)
         self.assertEqual(self.jev_client.instances, [])
         self.assertFalse((self.directory / "outputs/human_audit_openai.jsonl").exists())
-        self.assertIn("inspect errors before --retry-failed", sys.stdout.getvalue())
+        self.assertIn("rows still failed after 0 retry passes", sys.stdout.getvalue())
         self.assertNotIn("collection failed", sys.stdout.getvalue())
         # A later transport/collection failure must not be mistaken for the
         # existing row error and must not trigger new paid work.
@@ -1320,16 +1993,349 @@ class RunnerTests(unittest.TestCase):
         ):
             self.assertEqual(
                 self.runner.main(
-                    [*self.args, "--provider", "openai", "--retry-failed"]
+                    [*arguments, "--retry-failed"]
                 ),
                 2,
             )
         self.assertEqual(self.openai.submissions, 1)
         self.assertIn("collection failed", sys.stdout.getvalue())
         self.assertEqual(
-            self.runner.main([*self.args, "--provider", "openai", "--retry-failed"]), 0
+            self.runner.main([*arguments, "--retry-failed"]), 0
         )
         self.assertEqual(len(self.openai.uploads["input-2"]), 1)
+
+    def test_native_errors_finish_the_first_pass_before_retrying_only_failed_rows(self):
+        self.records = [
+            {"audit_id": f"row-{i}", "content": f"Fixture rule {i}."}
+            for i in range(4)
+        ]
+        self.write_rows()
+        arguments = [*self.args]
+        arguments[0] = "LOCUS"
+        for provider in ("openai", "google"):
+            with self.subTest(provider=provider):
+                service = getattr(self, provider)
+                submit = service.submit
+                key = "custom_id" if provider == "openai" else "key"
+                failed_id = None
+
+                def fail_first_batch(file_id, *args):
+                    nonlocal failed_id
+                    if service.submissions == 2:
+                        attempted = [
+                            row[key]
+                            for name in ("input-1", "input-2")
+                            for row in service.uploads[name]
+                        ]
+                        self.assertEqual(len(set(attempted)), 4)
+                        self.assertEqual(
+                            [row[key] for row in service.uploads[file_id]], [failed_id]
+                        )
+                    job_id = submit(file_id, *args)
+                    if service.submissions == 1:
+                        result = service.jobs[job_id]["results"][0]
+                        failed_id = result[key]
+                        service.jobs[job_id]["results"][0] = {
+                            key: failed_id,
+                            "error": {"code": "temporary_row_failure"},
+                        }
+                    return job_id
+
+                with patch.object(service, "submit", side_effect=fail_first_batch):
+                    self.assertEqual(
+                        self.runner.main(
+                            [
+                                *arguments,
+                                "--provider", provider,
+                                "--name", f"first_pass_{provider}",
+                                "--batch-size", "2",
+                                "--max-inflight-batches", "1",
+                            ]
+                        ),
+                        0,
+                    )
+                self.assertEqual(
+                    [len(rows) for rows in service.uploads.values()], [2, 2, 1]
+                )
+                ledger = (
+                    self.directory
+                    / "runs"
+                    / f"first_pass_{provider}_{provider}.sqlite3"
+                )
+                with closing(sqlite3.connect(ledger)) as db:
+                    progress = batch.summary(db)
+                self.assertEqual(progress["retry_passes"], 1)
+                self.assertEqual(progress["annotated"], 4)
+                self.assertEqual(progress["errors"], 0)
+
+    def test_native_retry_budget_persists_and_manual_retry_adds_only_one_pass(self):
+        self.records = [
+            {"audit_id": f"row-{i}", "content": f"Fixture rule {i}."}
+            for i in range(3)
+        ]
+        self.write_rows()
+        arguments = [*self.args]
+        arguments[0] = "LOCUS"
+        arguments += ["--batch-size", "2", "--max-inflight-batches", "1"]
+        service = self.google
+        submit = service.submit
+        failed_id = batch.request_id(pipeline.source_identity(self.records[0], 0)[0])
+
+        def always_fail_one(*args):
+            job_id = submit(*args)
+            for index, row in enumerate(service.jobs[job_id]["results"]):
+                if row["key"] == failed_id:
+                    service.jobs[job_id]["results"][index] = {
+                        "key": failed_id, "error": {"code": "persistent_row_failure"}
+                    }
+            return job_id
+
+        ledger = self.directory / "runs" / "LOCUS_google.sqlite3"
+        output = self.directory / "outputs" / "LOCUS_google.jsonl"
+        with patch.object(service, "submit", side_effect=always_fail_one):
+            self.assertEqual(self.runner.main(arguments), 2)
+            self.assertEqual(service.submissions, 4)
+            with closing(sqlite3.connect(ledger)) as db:
+                self.assertEqual(batch.summary(db)["retry_passes"], 2)
+                successes = db.execute(
+                    "SELECT source_id,annotation_json FROM annotations "
+                    "WHERE status='annotated' ORDER BY source_id"
+                ).fetchall()
+            self.assertFalse(output.exists())
+            self.assertEqual(self.runner.main(arguments), 2)
+            self.assertEqual(service.submissions, 4)
+            self.assertEqual(
+                self.runner.main([*arguments, "--retry-failed"]), 2
+            )
+            self.assertEqual(service.submissions, 5)
+            with closing(sqlite3.connect(ledger)) as db:
+                self.assertEqual(batch.summary(db)["retry_passes"], 3)
+        self.assertFalse(output.exists())
+        self.assertEqual(self.runner.main([*arguments, "--retry-failed"]), 0)
+        self.assertEqual(service.submissions, 6)
+        self.assertEqual(
+            [row["key"] for row in service.uploads["input-6"]], [failed_id]
+        )
+        self.assertEqual(len(output.read_text().splitlines()), 3)
+        with closing(sqlite3.connect(ledger)) as db:
+            self.assertEqual(batch.summary(db)["retry_passes"], 4)
+            annotations = dict(
+                db.execute("SELECT source_id,annotation_json FROM annotations")
+            )
+        for source_id, encoded in successes:
+            self.assertEqual(annotations[source_id], encoded)
+
+    def test_jev_row_errors_finish_then_retry_with_a_persisted_budget(self):
+        from neurips2026_locus.jev import JevResponseError
+
+        self.records = [{"content": f"rule {i}"} for i in range(3)]
+        self.write_rows()
+        arguments = [*self.args]
+        arguments[0] = "LOCUS"
+        arguments += ["--provider", "typesafe", "--workers", "1"]
+        decide = self.jev_client.decide
+        attempted = []
+
+        def fail_one(client, payload):
+            text = payload["state"]["excerpt"]
+            attempted.append(text)
+            if text == "rule 0":
+                client.requests.append(payload)
+                raise JevResponseError("Invalid JSON in received response")
+            return decide(client, payload)
+
+        ledger = self.directory / "runs" / "LOCUS_typesafe.sqlite3"
+        output = self.directory / "outputs" / "LOCUS_typesafe.jsonl"
+        with patch.object(self.jev_client, "decide", fail_one):
+            self.assertEqual(self.runner.main(arguments), 2)
+            self.assertEqual(attempted.count("rule 0"), 3)
+            self.assertEqual(
+                attempted[:5], ["rule 0", "rule 1", "rule 1", "rule 2", "rule 2"]
+            )
+            self.assertEqual(attempted[5:], ["rule 0", "rule 0"])
+            before = len(attempted)
+            self.assertEqual(self.runner.main(arguments), 2)
+            self.assertEqual(len(attempted), before)
+            self.assertEqual(
+                self.runner.main([*arguments, "--retry-failed"]), 2
+            )
+            self.assertEqual(attempted.count("rule 0"), 4)
+        self.assertFalse(output.exists())
+        self.assertEqual(self.runner.main([*arguments, "--retry-failed"]), 0)
+        self.assertEqual(len(output.read_text().splitlines()), 3)
+        with closing(sqlite3.connect(ledger)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM metadata WHERE key='row_retry_passes'"
+                ).fetchone(),
+                ("4",),
+            )
+
+    def test_jev_fatal_or_uncertain_errors_never_enter_automatic_row_retries(self):
+        from neurips2026_locus.jev import (
+            JevConnectionError, JevHTTPError, JevUncertainSubmissionError
+        )
+
+        self.records = [{"content": f"rule {i}"} for i in range(3)]
+        self.write_rows()
+        arguments = [*self.args]
+        arguments[0] = "LOCUS"
+        for index, error in enumerate(
+            (
+                JevConnectionError("Connection budget exhausted"),
+                JevUncertainSubmissionError("Possible submission"),
+                JevHTTPError(400),
+                JevHTTPError(401),
+                pipeline.InputError("Source hash mismatch"),
+            )
+        ):
+            with (
+                self.subTest(error=type(error).__name__),
+                patch.object(self.jev_client, "decide", side_effect=error) as send,
+            ):
+                self.assertEqual(
+                    self.runner.main(
+                        [
+                            *arguments,
+                            "--provider", "typesafe",
+                            "--workers", "1",
+                            "--name", f"fatal_{index}",
+                        ]
+                    ),
+                    2,
+                )
+                self.assertGreaterEqual(send.call_count, 1)
+                self.assertLessEqual(send.call_count, 2)
+                excerpts = [
+                    call.args[-1]["state"]["excerpt"] for call in send.call_args_list
+                ]
+                self.assertEqual(len(set(excerpts)), len(excerpts))
+            ledger = self.directory / "runs" / f"fatal_{index}_typesafe.sqlite3"
+            with closing(sqlite3.connect(ledger)) as db:
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) FROM annotations").fetchone(), (0,)
+                )
+                self.assertEqual(self.runner.read_retry_passes(db), 0)
+
+    def test_transient_collection_exhaustion_recovers_without_resubmitting(self):
+        for provider in ("openai", "google"):
+            with self.subTest(provider=provider):
+                service = getattr(self, provider)
+                status = service.status
+                failures = 0
+                now = 1000
+
+                def transient_then_success(job_id):
+                    nonlocal failures
+                    if failures < 3:
+                        failures += 1
+                        error = RuntimeError("temporary provider service failure")
+                        error.status_code = 503
+                        raise error
+                    return status(job_id)
+
+                def advance_wait(args, stop, progress):
+                    nonlocal now
+                    now = max(now + 1, (progress.get("operation_retry_at") or now) + 1)
+                    return False
+
+                with (
+                    patch.object(service, "status", side_effect=transient_then_success),
+                    patch.object(batch.time, "sleep"),
+                    patch.object(Event, "wait", return_value=False),
+                    patch.object(batch.time, "time", side_effect=lambda: now),
+                    patch.object(
+                        self.runner, "wait_for_batches", side_effect=advance_wait
+                    ),
+                ):
+                    self.assertEqual(
+                        self.runner.main([*self.args, "--provider", provider]), 0
+                    )
+                self.assertEqual(failures, 3)
+                self.assertEqual(service.submissions, 1)
+                self.assertEqual(len(service.uploads), 1)
+                output = self.directory / "outputs" / f"human_audit_{provider}.jsonl"
+                self.assertEqual(len(output.read_text().splitlines()), 250)
+
+    def test_operation_retry_deadline_overrides_polling_and_sooner_quota_retry(self):
+        args = self.runner.parse_args([*self.args, "--check-every", "0.5"])
+        stop = Mock(spec=Event)
+        stop.wait.return_value = True
+        with patch.object(self.runner.time, "time", return_value=1000):
+            self.assertTrue(
+                self.runner.wait_for_batches(
+                    args,
+                    stop,
+                    {"next_retry_at": 1005, "operation_retry_at": 4600},
+                )
+            )
+        stop.wait.assert_called_once_with(3600)
+
+    def test_coordinator_waits_for_quota_then_completes_the_same_uploaded_job(self):
+        service = self.openai
+        submit = service.submit
+        attempts = 0
+        now = 1000
+        deferred = []
+
+        def quota_then_success(*args):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise BatchTests.quota_rejection("openai")
+            return submit(*args)
+
+        def advance_wait(args, stop, progress):
+            nonlocal now
+            if progress.get("next_retry_at") is not None:
+                deferred.append(progress["deferred_jobs"])
+                now = progress["next_retry_at"] + 1
+            return False
+
+        with (
+            patch.object(service, "submit", side_effect=quota_then_success),
+            patch.object(batch.time, "time", side_effect=lambda: now),
+            patch.object(self.runner, "wait_for_batches", side_effect=advance_wait),
+        ):
+            self.assertEqual(
+                self.runner.main([*self.args, "--provider", "openai"]), 0
+            )
+        self.assertEqual(attempts, 2)
+        self.assertEqual(service.submissions, 1)
+        self.assertEqual(len(service.uploads), 1)
+        self.assertEqual(len(deferred), 1)
+        self.assertEqual(len(deferred[0]), 1)
+        output = self.directory / "outputs" / "human_audit_openai.jsonl"
+        self.assertEqual(len(output.read_text().splitlines()), 250)
+
+    def test_transient_upload_failure_recovers_before_creating_a_model_job(self):
+        upload = self.google.upload
+        attempts = 0
+        now = 1000
+
+        def fail_then_upload(path):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise httpx.ConnectTimeout("temporary upload connection failure")
+            return upload(path)
+
+        def advance_wait(args, stop, progress):
+            nonlocal now
+            now = max(now + 1, (progress.get("operation_retry_at") or now) + 1)
+            return False
+
+        with (
+            patch.object(self.google, "upload", side_effect=fail_then_upload),
+            patch.object(batch.time, "time", side_effect=lambda: now),
+            patch.object(self.runner, "wait_for_batches", side_effect=advance_wait),
+        ):
+            self.assertEqual(self.runner.main(self.args), 0)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(len(self.google.uploads), 1)
+        self.assertEqual(self.google.submissions, 1)
+        output = self.directory / "outputs" / "human_audit_google.jsonl"
+        self.assertEqual(len(output.read_text().splitlines()), 250)
 
     def test_dry_run_has_no_writes_or_calls(self):
         before = sorted(self.directory.iterdir())
@@ -1373,6 +2379,25 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(report["excerpt_characters"], sum(lengths))
         self.assertEqual(report["maximum_excerpt_characters"], max(lengths))
         self.assertEqual(report["truncated_rows"], 250)
+        self.records[0]["content"] = "x" * 16001
+        self.write_rows()
+        arguments = [*self.args]
+        arguments[0] = "LOCUS"
+        for provider in self.runner.PROVIDERS:
+            with (
+                self.subTest(provider=provider),
+                patch("sys.stdout", new=io.StringIO()) as output,
+            ):
+                self.assertEqual(
+                    self.runner.main(
+                        [*arguments, "--provider", provider, "--dry-run"]
+                    ),
+                    0,
+                )
+                report = json.loads(output.getvalue())
+                self.assertEqual(report["max_text_chars"], 16000)
+                self.assertEqual(report["maximum_excerpt_characters"], 16001)
+                self.assertEqual(report["truncated_rows"], 1)
 
     def test_wrong_size_duplicate_ids_and_prompt_overlap_fail_before_calls(self):
         self.records.pop()
@@ -1390,9 +2415,30 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.jev_client.instances, [])
         self.assertFalse((self.directory / "runs").exists())
 
-    def test_corpus_requires_explicit_input_and_checks_a_declared_count(self):
-        with self.assertRaises(SystemExit):
-            self.runner.parse_args(["LOCUS"])
+    def test_corpus_default_and_override_check_declared_count_before_calls(self):
+        with (
+            patch.object(pipeline, "JevClient") as typesafe_client,
+            patch.object(batch.openai_batch, "OpenAIBatchClient") as openai_client,
+            patch.object(batch.google_batch, "GoogleBatchClient") as google_client,
+        ):
+            for provider in self.runner.PROVIDERS:
+                with self.subTest(provider=provider):
+                    self.assertEqual(
+                        self.runner.main(
+                            [
+                                "LOCUS",
+                                "--provider",
+                                provider,
+                                "--env-file",
+                                str(self.env),
+                            ]
+                        ),
+                        2,
+                    )
+            typesafe_client.assert_not_called()
+            openai_client.assert_not_called()
+            google_client.assert_not_called()
+        self.assertFalse((self.directory / "runs").exists())
         args = [
             "LOCUS",
             "--input",
@@ -1405,6 +2451,24 @@ class RunnerTests(unittest.TestCase):
         ]
         self.assertEqual(self.runner.parse_args(args).expect_rows, None)
         self.assertEqual(self.runner.main(args), 0)
+        default = self.directory / "data" / "locus_v1.1_harmonized.jsonl"
+        default.parent.mkdir()
+        default.write_bytes(self.input.read_bytes())
+        for provider in self.runner.PROVIDERS:
+            with self.subTest(default_provider=provider):
+                self.assertEqual(
+                    self.runner.main(
+                        [
+                            "LOCUS",
+                            "--provider",
+                            provider,
+                            "--env-file",
+                            str(self.env),
+                            "--dry-run",
+                        ]
+                    ),
+                    0,
+                )
         self.assertEqual(self.runner.main([*args, "--expect-rows", "250"]), 0)
         self.assertEqual(self.runner.main([*args, "--expect-rows", "2000000"]), 2)
 
@@ -1484,72 +2548,100 @@ class RunnerTests(unittest.TestCase):
                     )
                     self.assertEqual(service.submissions - before, 3)
 
-    def test_locus_runs_every_supplied_row_for_one_selected_provider(self):
+    def test_locus_exports_only_document_section_ids_and_complete_annotations(self):
+        document_id = "doc_" + "0" * 24
+        source_metadata = {
+            "document_id": document_id,
+            "file_path": "/private/corpus/source.pdf",
+            "state": "al",
+            "vendor": "fixture-vendor",
+            "document_kind": "code",
+            "jurisdiction": "Fixture town",
+            "jurisdiction_geoid": "0100123",
+            "jurisdiction_fips": "0100123",
+            "geography_type": "place",
+            "city_county": "Fixture town",
+            "county_fips": "01001",
+            "county_names": "Fixture County",
+            "located_in_county_fips": "01001",
+            "located_in_county_names": "Fixture County",
+            "shared_by_governments": 1,
+            "heading_path": ["CHAPTER 1 / GENERAL"],
+            "pages": [1, 2],
+            "words": 4,
+            "flags": ["HARMONIZED_METADATA_NOT_MODEL_INPUT"],
+        }
         self.records = [
             {
-                "source_id": "original-source-0",
+                **source_metadata,
+                "index": 17,
                 "header": "STRUCTURAL-FIXTURE: Chapter 1",
                 "content": "",
-                "function": "Structural",
-                "topic": None,
-                "is_substantive": 0,
-                "source": {
-                    "document_id": "doc_" + "0" * 24,
-                    "note": "HARMONIZED_METADATA_NOT_MODEL_INPUT",
-                },
             },
             {
-                "source_id": "original-source-1",
-                "header": None,
-                "content": "A rule.",
-                "function": "Rules",
-                "topic": "Other",
-                "is_substantive": 1,
-                "source": {"document_id": "doc_" + "1" * 24},
+                **source_metadata,
+                "index": 23,
+                "header": "License requirement",
+                "content": "A license is required: SOURCE_TEXT_NOT_EXPORTED.",
             },
         ]
         self.write_rows()
+        source_bytes = self.input.read_bytes()
         arguments = [*self.args]
         arguments[0] = "LOCUS"
         for provider in self.runner.PROVIDERS:
-            name = "corpus_" + provider
-            self.assertEqual(
-                self.runner.main(
-                    [
-                        *arguments,
-                        "--provider",
-                        provider,
-                        "--name",
-                        name,
-                        "--expect-rows",
-                        "2",
+            with self.subTest(provider=provider):
+                name = "corpus_" + provider
+                self.assertEqual(
+                    self.runner.main(
+                        [
+                            *arguments,
+                            "--provider",
+                            provider,
+                            "--name",
+                            name,
+                            "--expect-rows",
+                            "2",
+                        ]
+                    ),
+                    0,
+                )
+                output = self.directory / "outputs" / f"{name}_{provider}.jsonl"
+                rows = [json.loads(line) for line in output.read_text().splitlines()]
+                field = pipeline.PROVIDER_ANNOTATION_FIELDS[provider]
+                self.assertEqual(len(rows), 2)
+                self.assertEqual(
+                    [(row["document_id"], row["index"]) for row in rows],
+                    [(document_id, 17), (document_id, 23)],
+                )
+                ledger = self.directory / "runs" / f"{name}_{provider}.sqlite3"
+                with closing(sqlite3.connect(ledger)) as db:
+                    stored = {
+                        source_id: json.loads(encoded)
+                        for source_id, encoded in db.execute(
+                            "SELECT source_id,annotation_json FROM annotations"
+                        )
+                    }
+                for index, (source, row) in enumerate(zip(self.records, rows)):
+                    self.assertEqual(set(row), {"document_id", "index", field})
+                    source_id, digest = pipeline.source_identity(source, index)
+                    self.assertEqual(row[field], stored[source_id])
+                    self.assertEqual(row[field]["source"]["sha256"], digest)
+                    self.assertEqual(row[field]["final"]["confidence"], "High")
+                if provider == "typesafe":
+                    payloads = [
+                        request
+                        for client in self.jev_client.instances
+                        for request in client.requests
                     ]
-                ),
-                0,
-            )
-            rows = [
-                json.loads(line)
-                for line in (self.directory / "outputs" / f"{name}_{provider}.jsonl")
-                .read_text()
-                .splitlines()
-            ]
-            self.assertEqual(len(rows), 2)
-            self.assertEqual(rows[0]["header"], self.records[0]["header"])
-            self.assertEqual(rows[0]["content"], "")
-            self.assertEqual(rows[0]["source_id"], self.records[0]["source_id"])
-            self.assertEqual(rows[0]["function"], "Structural")
-            if provider == "typesafe":
-                payloads = [
-                    request
-                    for client in self.jev_client.instances
-                    for request in client.requests
-                ]
-            else:
-                payloads = list(getattr(self, provider).uploads.values())
-            self.assertNotIn(
-                "HARMONIZED_METADATA_NOT_MODEL_INPUT", json.dumps(payloads)
-            )
-            self.assertNotIn("original-source-0", json.dumps(payloads))
+                else:
+                    payloads = list(getattr(self, provider).uploads.values())
+                self.assertNotIn(
+                    "HARMONIZED_METADATA_NOT_MODEL_INPUT", json.dumps(payloads)
+                )
+                self.assertNotIn("SOURCE_TEXT_NOT_EXPORTED", output.read_text())
+                self.assertNotIn("/private/corpus", output.read_text())
+                self.assertEqual(self.input.read_bytes(), source_bytes)
 
 
 class CSVRunnerTests(unittest.TestCase):
@@ -1606,12 +2698,20 @@ class CSVRunnerTests(unittest.TestCase):
     def test_csv_default_projects_all_text_without_human_labels_for_each_provider(self):
         self.csv_rows[0]["text"] = 'Quoted "words", café, and commas.\nAnother rule.'
         self.write_csv()
+        work_dir = (self.directory / "external-state").resolve()
         for provider in self.runner.PROVIDERS:
             with self.subTest(provider=provider):
+                arguments = [
+                    *self.args,
+                    "--provider",
+                    provider,
+                    "--work-dir",
+                    str(work_dir),
+                ]
                 self.assertEqual(
-                    self.runner.main([*self.args, "--provider", provider]), 0
+                    self.runner.main(arguments), 0
                 )
-                cache = self.cache_path(provider)
+                cache = work_dir / "runs" / f"human_audit_{provider}.input.jsonl"
                 rows = [json.loads(line) for line in cache.read_text().splitlines()]
                 self.assertEqual(len(rows), 250)
                 for source, projected in zip(self.csv_rows, rows):
@@ -1638,12 +2738,19 @@ class CSVRunnerTests(unittest.TestCase):
                     payloads = list(getattr(self, provider).uploads.values())
                     self.assertEqual(len(payloads[-1]), 250)
                 self.assertNotIn("HUMAN_ONLY_NOT_MODEL_INPUT", json.dumps(payloads))
-                output = self.component / "outputs" / f"human_audit_{provider}.jsonl"
+                output = work_dir / "outputs" / f"human_audit_{provider}.jsonl"
                 published = [
                     json.loads(line) for line in output.read_text().splitlines()
                 ]
                 self.assertEqual(len(published), 250)
-                self.assertEqual(published[0]["content"], self.csv_rows[0]["text"])
+                field = pipeline.PROVIDER_ANNOTATION_FIELDS[provider]
+                self.assertEqual(
+                    [row["audit_id"] for row in published],
+                    [row["audit_id"] for row in self.csv_rows],
+                )
+                for row in published:
+                    self.assertEqual(set(row), {"audit_id", field})
+                self.assertNotIn(self.csv_rows[0]["text"], output.read_text())
                 self.assertNotIn("HUMAN_ONLY_NOT_MODEL_INPUT", output.read_text())
                 before = (
                     sum(len(client.requests) for client in self.jev_client.instances),
@@ -1651,7 +2758,7 @@ class CSVRunnerTests(unittest.TestCase):
                     self.google.submissions,
                 )
                 self.assertEqual(
-                    self.runner.main([*self.args, "--provider", provider]), 0
+                    self.runner.main(arguments), 0
                 )
                 self.assertEqual(
                     (
@@ -1664,6 +2771,8 @@ class CSVRunnerTests(unittest.TestCase):
                     ),
                     before,
                 )
+        self.assertFalse((self.component / "runs").exists())
+        self.assertFalse((self.component / "outputs").exists())
 
     def test_csv_dry_runs_do_not_materialize_inputs_or_other_files(self):
         def snapshot():

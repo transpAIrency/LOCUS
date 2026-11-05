@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Annotate human_audit (250 excerpts) or LOCUS (an explicit corpus input).
+"""Annotate human_audit (250 excerpts) or the harmonized LOCUS dataset.
 
 Select exactly one provider per invocation. Native batches are bounded in flight;
 Typesafe uses a bounded worker pool. Repeating the same command resumes its ledger.
@@ -39,6 +39,16 @@ PROVIDERS = ("typesafe", "openai", "google")
 SDK_MODULES = {"typesafe": "httpx", "openai": "openai", "google": "google.genai"}
 
 
+def nonnegative_int(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be a nonnegative integer") from None
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer")
+    return number
+
+
 def default_human_csv():
     """Use the human annotation release beside this source component."""
     base = ROOT.parent if (ROOT / "pyproject.toml").is_file() else ROOT
@@ -51,15 +61,23 @@ def parse_args(argv=None):
     parser.add_argument(
         "dataset",
         choices=("human_audit", "LOCUS"),
-        help="human_audit: 250 audit excerpts; LOCUS: every row of --input.",
+        help="human_audit: 250 audit excerpts; LOCUS: the harmonized dataset.",
     )
     parser.add_argument(
         "--input",
         type=Path,
-        help="human_audit defaults to human_annotation/LOCUS_snorkel_labels.csv; LOCUS requires JSONL. Explicit human-audit JSONL remains supported.",
+        help=(
+            "Optional input override. Defaults: human_audit uses the Snorkel CSV; "
+            "LOCUS uses data/locus_v1.1_harmonized.jsonl."
+        ),
     )
     parser.add_argument(
         "--name", help="Run name; defaults to the dataset name. Reuse it to resume."
+    )
+    parser.add_argument(
+        "--work-dir",
+        type=Path,
+        help="Directory for runs and outputs; defaults to this annotation folder.",
     )
     parser.add_argument(
         "--provider",
@@ -85,32 +103,43 @@ def parse_args(argv=None):
     parser.add_argument(
         "--workers",
         type=pipeline.positive_int,
-        default=pipeline.DEFAULT_WORKERS,
-        help="Concurrent Typesafe rows.",
+        help="Concurrent Jev rows: LOCUS defaults to 16; human_audit to 4.",
     )
     parser.add_argument(
         "--max-text-chars",
         type=pipeline.positive_int,
-        help="Optional character cap; truncation is recorded.",
+        help="Character cap: LOCUS defaults to 16000; human_audit adds no cap. Truncation is recorded.",
     )
     parser.add_argument(
-        "--batch-size", type=pipeline.positive_int, default=pipeline.DEFAULT_BATCH_SIZE
+        "--batch-size",
+        type=pipeline.positive_int,
+        help="Requests per batch: LOCUS defaults to 50000; human_audit to 5000.",
     )
     parser.add_argument(
         "--max-inflight-batches",
         type=pipeline.positive_int,
-        default=pipeline.DEFAULT_MAX_INFLIGHT,
-        help="Per-provider remote job cap; increase only within your token quota.",
+        help="Active batch cap: LOCUS defaults to OpenAI 256 / Google 100; human_audit to 1.",
     )
     parser.add_argument(
         "--check-every",
         type=pipeline.positive_float,
-        help="Minutes between batch polls (human_audit: 0.5; LOCUS: 10).",
+        help="Minutes between batch polls (default 0.5).",
     )
     parser.add_argument(
         "--retry-failed",
         action="store_true",
-        help="Explicitly retry failed batch rows once on restart.",
+        help="Allow one additional failed-row retry pass when resuming.",
+    )
+    parser.add_argument(
+        "--max-retry-passes",
+        type=nonnegative_int,
+        default=2,
+        help="Failed-row retry passes after all rows are attempted (default 2; 0 disables automatic retries). The count persists when resuming.",
+    )
+    parser.add_argument(
+        "--cleanup-remote-files",
+        action="store_true",
+        help="Google only: delete this run's completed cloud batch files after saving annotations locally.",
     )
     parser.add_argument(
         "--dry-run",
@@ -124,42 +153,66 @@ def parse_args(argv=None):
         raise pipeline.InputError(
             "--api-key-env must name an environment variable, not contain an API key"
         )
-    if args.dataset == "LOCUS" and args.input is None:
-        parser.error("LOCUS requires --input /absolute/path/to/original.jsonl")
     if args.dataset == "human_audit" and args.expect_rows not in (None, 250):
         parser.error("human_audit requires exactly 250 rows")
-    args.input = (args.input or default_human_csv()).resolve()
+    if args.cleanup_remote_files and args.provider != "google":
+        parser.error("--cleanup-remote-files is supported only for google")
+    default_input = (
+        default_human_csv()
+        if args.dataset == "human_audit"
+        else ROOT / "data/locus_v1.1_harmonized.jsonl"
+    )
+    args.input = (args.input or default_input).resolve()
     if args.dataset == "LOCUS" and args.input.suffix == ".gz":
         parser.error(
             "LOCUS requires uncompressed JSONL for efficient indexed reads; decompress separately first"
         )
     if args.dataset == "human_audit":
         args.expect_rows = 250
+    elif args.max_text_chars is None:
+        args.max_text_chars = 16000
+    if args.workers is None:
+        args.workers = 16 if args.dataset == "LOCUS" else pipeline.DEFAULT_WORKERS
+    if args.batch_size is None:
+        args.batch_size = 50000 if args.dataset == "LOCUS" else pipeline.DEFAULT_BATCH_SIZE
+    if args.max_inflight_batches is None:
+        args.max_inflight_batches = (
+            {"openai": 256, "google": 100}.get(
+                args.provider, pipeline.DEFAULT_MAX_INFLIGHT
+            )
+            if args.dataset == "LOCUS"
+            else pipeline.DEFAULT_MAX_INFLIGHT
+        )
     if args.check_every is None:
-        args.check_every = 0.5 if args.dataset == "human_audit" else 10
+        args.check_every = 0.5
     if args.name is None:
         args.name = args.dataset
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", args.name):
         parser.error("--name must use only letters, numbers, underscores, or hyphens")
-    if args.batch_size > 5000:
-        parser.error("--batch-size must not exceed 5000")
+    if args.batch_size > batch.MAX_BATCH_ROWS:
+        parser.error(f"--batch-size must not exceed {batch.MAX_BATCH_ROWS}")
+    if args.work_dir is not None:
+        args.work_dir = args.work_dir.expanduser().resolve()
     args.env_file = pipeline.resolve_env_file(args.env_file)
     return args
 
 
 def ledger_path(args):
     """Keep each selected provider's checkpoint under its run name."""
-    return ROOT / "runs" / f"{args.name}_{args.provider}.sqlite3"
+    base = getattr(args, "work_dir", None) or ROOT
+    return base / "runs" / f"{args.name}_{args.provider}.sqlite3"
 
 
 def output_path(args):
     """Name a provider export beside the other outputs for this checkout."""
-    return ROOT / "outputs" / f"{args.name}_{args.provider}.jsonl"
+    base = getattr(args, "work_dir", None) or ROOT
+    return base / "outputs" / f"{args.name}_{args.provider}.jsonl"
 
 
 def input_cache_path(args):
     """Keep the model-only CSV projection separate from labels and outputs."""
-    return ROOT / "runs" / f"{args.name}_{args.provider}.input.jsonl"
+    base = getattr(args, "work_dir", None) or ROOT
+    return base / "runs" / f"{args.name}_{args.provider}.input.jsonl"
 
 
 def _human_csv_records(path, stop_event=None):
@@ -266,8 +319,6 @@ def arguments(args):
         result += ["--max-text-chars", str(args.max_text_chars)]
     if args.provider == "typesafe":
         result += ["--workers", str(args.workers)]
-        if args.retry_failed:
-            result += ["--retry-failed"]
     else:
         result += [
             "--batch-size",
@@ -275,6 +326,8 @@ def arguments(args):
             "--max-inflight-batches",
             str(args.max_inflight_batches),
         ]
+        if args.cleanup_remote_files:
+            result += ["--cleanup-remote-files"]
     return result
 
 
@@ -437,23 +490,88 @@ def preflight(args, stop_event=None):
     )
 
 
+def wait_for_batches(args, stop, progress):
+    """Keep polling responsive while respecting a known deferred retry time."""
+    delay = args.check_every * 60
+    now = time.time()
+    retry_at = progress.get("next_retry_at")
+    if isinstance(retry_at, (int, float)) and retry_at > now:
+        delay = min(delay, max(0.1, retry_at - now))
+    operation_retry_at = progress.get("operation_retry_at")
+    if isinstance(operation_retry_at, (int, float)) and operation_retry_at > now:
+        delay = max(delay, operation_retry_at - now)
+    return stop.wait(delay)
+
+
+def read_retry_passes(db):
+    row = db.execute(
+        "SELECT value FROM metadata WHERE key='row_retry_passes'"
+    ).fetchone()
+    try:
+        count = int(row[0]) if row else 0
+    except (TypeError, ValueError):
+        raise pipeline.InputError("Invalid saved retry-pass count") from None
+    if count < 0:
+        raise pipeline.InputError("Invalid saved retry-pass count")
+    return count
+
+
+def retry_budget(args, completed):
+    return max(
+        args.max_retry_passes,
+        completed + (1 if args.retry_failed else 0),
+    )
+
+
+def remaining_failures(failed, passes):
+    return (
+        f"{failed:,} rows still failed after {passes} retry passes; "
+        "completed annotations are checkpointed; use --retry-failed for another pass"
+    )
+
+
 def run_provider(args, stop):
     """Resume only the selected provider through collection and export."""
     provider = args.provider
     shared = arguments(args)
     resume = ["--resume"] if ledger_path(args).exists() else []
     if provider == "typesafe":
-        if stop.is_set():
-            return "stopped"
-        if (
-            pipeline.main(
-                [*shared, *resume],
+        completed_passes = 0
+        if ledger_path(args).exists():
+            with closing(
+                pipeline.AnnotationLedger.open_readonly(ledger_path(args))
+            ) as ledger:
+                completed_passes = read_retry_passes(ledger.connection)
+        allowed_passes = retry_budget(args, completed_passes)
+        retry = []
+        while not stop.is_set():
+            code = pipeline.main(
+                [*shared, *resume, *retry],
                 stop_event=stop,
                 expected_input_sha256=args.input_sha256,
             )
-            != 0
-        ):
-            return "failed; inspect recorded errors before --retry-failed; successful stages are checkpointed"
+            if code == 0:
+                break
+            if code != batch.ROW_ERRORS_EXIT_CODE:
+                return "failed; inspect the provider or local error before resuming; successful stages are checkpointed"
+            with closing(
+                pipeline.AnnotationLedger.open_readonly(ledger_path(args))
+            ) as ledger:
+                completed_passes = read_retry_passes(ledger.connection)
+                failed = ledger.connection.execute(
+                    "SELECT COUNT(*) FROM annotations WHERE status='failed'"
+                ).fetchone()[0]
+            if completed_passes >= allowed_passes:
+                return remaining_failures(failed, completed_passes)
+            print(
+                f"{provider}: all rows attempted; retrying {failed:,} failed rows "
+                f"(pass {completed_passes + 1}/{allowed_passes})",
+                flush=True,
+            )
+            resume = ["--resume"]
+            retry = ["--retry-failed"]
+        else:
+            return "stopped"
     else:
         # Local preparation completes before this invocation can create any job.
         if pipeline.main(
@@ -462,7 +580,10 @@ def run_provider(args, stop):
             expected_input_sha256=args.input_sha256,
         ) not in (0, batch.ROW_ERRORS_EXIT_CODE):
             return "preparation stopped; no new jobs submitted"
-        retry = args.retry_failed
+        with closing(
+            pipeline.AnnotationLedger.open_readonly(ledger_path(args))
+        ) as ledger:
+            allowed_passes = retry_budget(args, read_retry_passes(ledger.connection))
         while not stop.is_set():
             collected = pipeline.main(
                 [*shared, "--resume", "--batch-action", "collect"],
@@ -475,30 +596,49 @@ def run_provider(args, stop):
                 progress = batch.summary(ledger.connection)
             if stop.is_set():
                 return "stopped"
+            if collected == batch.RETRYABLE_OPERATION_EXIT_CODE:
+                if wait_for_batches(args, stop, progress):
+                    return "stopped"
+                continue
             if collected not in (0, batch.ROW_ERRORS_EXIT_CODE):
                 return (
                     "collection failed; inspect provider/ledger state before resuming"
                 )
-            if progress["errors"] and not retry:
-                return "failed; inspect errors before --retry-failed"
             if progress["annotated"] == progress["requests"]:
                 break
-            action = "retry" if retry else "submit"
-            retry = False
-            if (
-                pipeline.main(
-                    [*shared, "--resume", "--batch-action", action],
-                    stop_event=stop,
-                    expected_input_sha256=args.input_sha256,
+            action = "submit"
+            if progress["annotated"] + progress["errors"] == progress["requests"]:
+                completed_passes = progress["retry_passes"]
+                if completed_passes >= allowed_passes:
+                    return remaining_failures(progress["errors"], completed_passes)
+                action = "retry"
+                print(
+                    f"{provider}: all rows attempted; retrying {progress['errors']:,} failed rows "
+                    f"(pass {completed_passes + 1}/{allowed_passes})",
+                    flush=True,
                 )
-                != 0
+            submitted = pipeline.main(
+                [*shared, "--resume", "--batch-action", action],
+                stop_event=stop,
+                expected_input_sha256=args.input_sha256,
+            )
+            if submitted not in (
+                0,
+                batch.ROW_ERRORS_EXIT_CODE,
+                batch.RETRYABLE_OPERATION_EXIT_CODE,
             ):
                 return "stopped; inspect submission state before retrying"
+            with closing(
+                pipeline.AnnotationLedger.open_readonly(ledger_path(args))
+            ) as ledger:
+                progress = batch.summary(ledger.connection)
             print(
-                f"{provider}: {progress['annotated']:,}/{progress['requests']:,} complete",
+                f"{provider}: {progress['annotated']:,}/{progress['requests']:,} complete; "
+                f"{progress['batch_states'].get('submitted', 0)} batches active; "
+                f"{progress['batch_states'].get('quota_wait', 0)} waiting for quota",
                 flush=True,
             )
-            if stop.wait(args.check_every * 60):
+            if wait_for_batches(args, stop, progress):
                 return "stopped"
         else:
             return "stopped"

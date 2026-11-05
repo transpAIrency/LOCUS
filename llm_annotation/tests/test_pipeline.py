@@ -45,8 +45,10 @@ class FakeJevClient:
         timeout_seconds: float,
         max_attempts: int,
         stop_event=None,
+        retry_rate_limits=False,
     ) -> None:
         self.endpoint = endpoint
+        self.retry_rate_limits = retry_rate_limits
         self.requests: list[dict[str, object]] = []
         type(self).instances.append(self)
 
@@ -231,7 +233,7 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(annotation, original)
 
-    def test_export_validates_run_details_and_preserves_source_record_provenance(self):
+    def test_export_validates_run_details_and_omits_source_record_provenance(self):
         source_provenance = {
             "provider": "original-data-source",
             "processing_mode": "source-preparation",
@@ -260,7 +262,7 @@ class PipelineTests(unittest.TestCase):
                     (json.dumps(value), source_id),
                 )
                 db.commit()
-                return pipeline.export_augmented_jsonl(
+                return pipeline.export_annotations_jsonl(
                     input_path=self.input_path,
                     ledger_path=self.ledger_path,
                     output_path=output,
@@ -271,7 +273,8 @@ class PipelineTests(unittest.TestCase):
 
             export(compatible)
             published = json.loads(output.read_text())
-            self.assertEqual(published["provenance"], source_provenance)
+            self.assertNotIn("provenance", published)
+            self.assertNotIn("content", published)
             self.assertNotIn("provenance", published["classification_jev"])
             self.assertEqual(
                 published["classification_jev"]["run_details"], current["run_details"]
@@ -313,7 +316,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(FakeJevClient.instances[-1].requests, [])
         self.assertEqual(prompt_ledger_snapshot(self.ledger_path), historical)
         output = self.directory / "legacy-export.jsonl"
-        pipeline.export_augmented_jsonl(
+        pipeline.export_annotations_jsonl(
             input_path=self.input_path,
             ledger_path=self.ledger_path,
             output_path=output,
@@ -499,7 +502,7 @@ class PipelineTests(unittest.TestCase):
     ):
         write_jsonl(self.input_path, [{"content": "A rule."}])
         self._annotate()
-        script = "import os,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from neurips2026_locus.pipeline import export_augmented_jsonl; os.umask(int(sys.argv[2],8)); export_augmented_jsonl(input_path=Path(sys.argv[3]),ledger_path=Path(sys.argv[4]),output_path=Path(sys.argv[5]),include_excluded_header_only=False,allow_partial=False,overwrite=False)"
+        script = "import os,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from neurips2026_locus.pipeline import export_annotations_jsonl; os.umask(int(sys.argv[2],8)); export_annotations_jsonl(input_path=Path(sys.argv[3]),ledger_path=Path(sys.argv[4]),output_path=Path(sys.argv[5]),include_excluded_header_only=False,allow_partial=False,overwrite=False)"
         for mask, expected in (("022", 0o644), ("077", 0o600)):
             target = self.directory / f"export_{mask}.jsonl"
             subprocess.run(
@@ -636,8 +639,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result["annotated"], 2)
         self.assertEqual(len(FakeJevClient.instances[-1].requests), 3)
 
-    def test_unknown_request_rejection_stops_but_is_not_resent_on_resume(self):
-        """An unrecognized 400 may be global, so stop and retain its row outcome."""
+    def test_unknown_request_rejection_is_fatal_and_not_recorded_as_a_data_error(self):
         from neurips2026_locus.jev import JevHTTPError
 
         write_jsonl(self.input_path, [{"content": f"rule {i}"} for i in range(10)])
@@ -656,17 +658,19 @@ class PipelineTests(unittest.TestCase):
             patch.object(FakeJevClient, "decide", decide),
         ):
             with self.assertRaises(pipeline.InputError):
-                pipeline.annotate(**kwargs)
-            result = pipeline.annotate(**dict(kwargs, resume=True))
+                pipeline.annotate(**kwargs, workers=1)
         self.assertEqual(len(rejected), 1)
-        self.assertEqual(result["failed"], 1)
         with closing(sqlite3.connect(self.ledger_path)) as connection:
-            self.assertEqual(
+            statuses = dict(
                 connection.execute(
                     "SELECT status,COUNT(*) FROM annotations GROUP BY status"
-                ).fetchall(),
-                [("annotated", 9), ("failed", 1)],
+                )
             )
+        self.assertNotIn("failed", statuses)
+        self.assertIn(statuses["annotated"], (3, 4))
+        resumed = self._annotate(resume=True)
+        self.assertEqual(resumed["annotated"], 10 - statuses["annotated"])
+        self.assertEqual(resumed["failed"], 0)
 
     def test_authentication_failure_does_not_become_a_failed_data_row(self):
         from neurips2026_locus.jev import JevHTTPError
@@ -685,6 +689,75 @@ class PipelineTests(unittest.TestCase):
             )
         self.assertEqual(self._annotate(resume=True)["annotated"], 1)
 
+    def test_isolated_response_errors_continue_and_retry_only_the_failed_stage(self):
+        from neurips2026_locus.jev import JevResponseError
+
+        records = [{"content": f"rule {i}"} for i in range(3)]
+        write_jsonl(self.input_path, records)
+        decide = FakeJevClient.decide
+        for mode in ("malformed", "classification_schema", "confidence_schema"):
+            with self.subTest(mode=mode):
+                ledger = self.directory / f"{mode}.sqlite3"
+                kwargs = annotation_kwargs(self.input_path, ledger)
+
+                def fail_one(client, payload):
+                    bad_row = payload["state"]["excerpt"] == "rule 1"
+                    confidence = "confidence_label" in payload["questions"]
+                    if bad_row and mode == "malformed" and not confidence:
+                        client.requests.append(payload)
+                        raise JevResponseError("Invalid JSON in received response")
+                    response = decide(client, payload)
+                    if bad_row and confidence == (mode == "confidence_schema"):
+                        question = (
+                            "confidence_label" if confidence else "primary_function"
+                        )
+                        response.body["answers"][question]["choice"] = "Not a label"
+                        return JevResponse(
+                            response.body,
+                            response.request_sha256,
+                            sha256(
+                                pipeline.canonical_json(response.body).encode("utf-8")
+                            ).hexdigest(),
+                        )
+                    return response
+
+                with (
+                    patch.object(pipeline, "JevClient", FakeJevClient),
+                    patch.object(FakeJevClient, "decide", fail_one),
+                ):
+                    first = pipeline.annotate(**kwargs, workers=1)
+                self.assertEqual((first["annotated"], first["failed"]), (2, 1))
+                with closing(sqlite3.connect(ledger)) as db:
+                    successes = db.execute(
+                        "SELECT source_id,annotation_json FROM annotations "
+                        "WHERE status='annotated' ORDER BY source_id"
+                    ).fetchall()
+                with patch.object(pipeline, "JevClient", FakeJevClient):
+                    resumed = pipeline.annotate(**dict(kwargs, resume=True), workers=1)
+                    self.assertEqual(resumed["failed"], 1)
+                    self.assertEqual(FakeJevClient.instances[-1].requests, [])
+                    retried = pipeline.annotate(
+                        **dict(kwargs, resume=True), workers=1, retry_failed=True
+                    )
+                self.assertEqual((retried["annotated"], retried["failed"]), (1, 0))
+                requests = FakeJevClient.instances[-1].requests
+                self.assertEqual(len(requests), 1 if mode == "confidence_schema" else 2)
+                self.assertTrue(
+                    all(request["state"]["excerpt"] == "rule 1" for request in requests)
+                )
+                with closing(sqlite3.connect(ledger)) as db:
+                    self.assertEqual(
+                        db.execute(
+                            "SELECT value FROM metadata WHERE key='row_retry_passes'"
+                        ).fetchone(),
+                        ("1",),
+                    )
+                    annotations = dict(
+                        db.execute("SELECT source_id,annotation_json FROM annotations")
+                    )
+                for source_id, encoded in successes:
+                    self.assertEqual(annotations[source_id], encoded)
+
     def test_changed_request_builders_block_new_calls_but_allow_export(self):
         write_jsonl(self.input_path, [{"content": "A rule."}])
         self._annotate()
@@ -699,7 +772,7 @@ class PipelineTests(unittest.TestCase):
                     **annotation_kwargs(self.input_path, self.ledger_path, resume=True)
                 )
             client.assert_not_called()
-            result = pipeline.export_augmented_jsonl(
+            result = pipeline.export_annotations_jsonl(
                 input_path=self.input_path,
                 ledger_path=self.ledger_path,
                 output_path=self.directory / "export.jsonl",
@@ -734,7 +807,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual((resumed["already_complete"], resumed["failed"]), (39, 1))
         self.assertEqual(len(rejected), 1)
         with self.assertRaisesRegex(pipeline.InputError, "failed rows"):
-            pipeline.export_augmented_jsonl(
+            pipeline.export_annotations_jsonl(
                 input_path=self.input_path,
                 ledger_path=self.ledger_path,
                 output_path=self.directory / "output.jsonl",
@@ -929,7 +1002,7 @@ class PipelineTests(unittest.TestCase):
         annotate.assert_not_called()
         self.assertFalse(self.ledger_path.exists())
 
-    def test_structural_row_is_preserved_in_augmented_export(self) -> None:
+    def test_structural_annotation_is_retained_without_legacy_labels(self) -> None:
         original_structural_classification = {
             "is_substantive": 0,
             "primary_function": "Structural",
@@ -941,20 +1014,23 @@ class PipelineTests(unittest.TestCase):
             [
                 {
                     "document_id": "structural-1",
+                    "index": 17,
                     "header": "Contents",
                     "content": "STRUCTURAL-FIXTURE: table of contents and source note.",
                     "classification": original_structural_classification,
                 },
                 {
                     "document_id": "rule-1",
+                    "index": 18,
                     "content": "No person may operate without a license.",
                 },
             ],
         )
 
         counts = self._annotate()
-        output_path = self.directory / "augmented.jsonl"
-        export_counts = pipeline.export_augmented_jsonl(
+        self.assertTrue(FakeJevClient.instances[0].retry_rate_limits)
+        output_path = self.directory / "annotations.jsonl"
+        export_counts = pipeline.export_annotations_jsonl(
             input_path=self.input_path,
             ledger_path=self.ledger_path,
             output_path=output_path,
@@ -985,8 +1061,10 @@ class PipelineTests(unittest.TestCase):
             row for row in output_rows if row["document_id"] == "structural-1"
         )
         self.assertEqual(
-            structural_row["classification"], original_structural_classification
+            set(structural_row), {"document_id", "index", "classification_jev"}
         )
+        self.assertEqual(structural_row["index"], 17)
+        self.assertNotIn("classification", structural_row)
         self.assertEqual(
             structural_row["classification_jev"]["final"]["primary_function"],
             "Structural",
@@ -1010,9 +1088,15 @@ class PipelineTests(unittest.TestCase):
         write_jsonl(
             self.input_path,
             [
-                {"document_id": "header-only", "header": "CHAPTER 1", "content": ""},
+                {
+                    "document_id": "header-only",
+                    "index": 3,
+                    "header": "CHAPTER 1",
+                    "content": "",
+                },
                 {
                     "document_id": "structural-content",
+                    "index": 4,
                     "header": "Source record",
                     "content": "STRUCTURAL-FIXTURE: history and source note.",
                 },
@@ -1020,8 +1104,8 @@ class PipelineTests(unittest.TestCase):
         )
 
         counts = self._annotate()
-        output_path = self.directory / "augmented.jsonl"
-        export_counts = pipeline.export_augmented_jsonl(
+        output_path = self.directory / "annotations.jsonl"
+        export_counts = pipeline.export_annotations_jsonl(
             input_path=self.input_path,
             ledger_path=self.ledger_path,
             output_path=output_path,
@@ -1137,7 +1221,7 @@ class PipelineTests(unittest.TestCase):
             sum(len(client.requests) for client in FakeJevClient.instances), 2
         )
         output = self.directory / "bounded.jsonl"
-        result = pipeline.export_augmented_jsonl(
+        result = pipeline.export_annotations_jsonl(
             input_path=self.input_path,
             ledger_path=self.ledger_path,
             output_path=output,
@@ -1149,7 +1233,15 @@ class PipelineTests(unittest.TestCase):
             result,
             {"exported": 1, "excluded_header_only": 0, "missing": 0, "failed": 0},
         )
-        self.assertEqual(json.loads(output.read_text())["content"], "First rule.")
+        published = json.loads(output.read_text())
+        self.assertEqual(set(published), {
+            "source_id", "input_row_index", "classification_jev"
+        })
+        self.assertEqual(published["input_row_index"], 0)
+        self.assertEqual(
+            published["source_id"],
+            pipeline.source_identity({"content": "First rule."}, 0)[0],
+        )
 
     def test_ledger_setup_failures_always_close_the_connection(self):
         for operation in ("execute", "commit"):
@@ -1261,6 +1353,44 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(public[key], record[key])
         self.assertNotIn("source_file", public["metadata"])
         self.assertRegex(public["metadata"]["document_id"], r"^doc_[0-9a-f]{24}$")
+
+    def test_public_sanitizer_preserves_legal_heading_paths_in_locator_metadata(self):
+        headings = [
+            "## LICENSES / PERMITS",
+            r"## CHAPTER 1\GENERAL PROVISIONS",
+            "/TITLE I GENERAL PROVISIONS",
+            r"\TITLE II ADMINISTRATION",
+            "## APPENDIX A.pdf",
+            "## EXAMPLE FILE ordinance.jsonl",
+        ]
+        record = {
+            "document_id": "stable-document-1",
+            "header": "License required",
+            "content": "A license is required.",
+            "heading_path": headings,
+            "metadata": {
+                "source_files": [
+                    {
+                        "source_file": "/private/appendix.pdf",
+                        "heading_path": list(headings),
+                    }
+                ]
+            },
+        }
+        before = json.loads(json.dumps(record))
+        identity = pipeline.source_identity(record, 0)
+
+        public = pipeline.public_source_record(record)
+
+        self.assertEqual(public["heading_path"], headings)
+        nested = public["metadata"]["source_files"][0]
+        self.assertEqual(nested["heading_path"], headings)
+        self.assertNotIn("source_file", nested)
+        self.assertEqual(
+            nested["document_id"], opaque_document_id("/private/appendix.pdf")
+        )
+        self.assertEqual(record, before)
+        self.assertEqual(pipeline.source_identity(record, 0), identity)
 
     def test_public_sanitizer_handles_nested_locator_aliases_and_keeps_urls(self):
         aliases = [
@@ -1437,10 +1567,203 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(pipeline.source_identity(record, 6), identity)
                 self.assertEqual(record, before)
 
-    def test_export_redacts_source_paths_without_mutating_ledger_annotations(self):
+    def test_annotation_export_keeps_complete_jev_choices_and_run_metadata(self):
+        class ProbabilityClient(FakeJevClient):
+            def decide(self, payload):
+                response = super().decide(payload)
+                body = response.body
+                for name, answer in body["answers"].items():
+                    answer["type"] = "choice"
+                    if name == "confidence_label":
+                        probabilities = {"High": 0.40, "Medium": 0.31, "Low": 0.29}
+                    elif name == "primary_function":
+                        probabilities = {
+                            "Context": 0.0,
+                            "Rules": 0.92,
+                            "Process": 0.08,
+                            "Enforcement": 0.0,
+                            "Structural": 0.0,
+                        }
+                    else:
+                        probabilities = {
+                            "Buildings": 0.0,
+                            "Business": 0.08,
+                            "Zoning": 0.0,
+                            "Nuisance": 0.0,
+                            "Other": 0.92,
+                        }
+                    answer["probabilities"] = probabilities
+                body["usage"] = {"input_tokens": 123, "output_tokens": 17}
+                return JevResponse(
+                    body=body,
+                    request_sha256=response.request_sha256,
+                    response_sha256=sha256(
+                        pipeline.canonical_json(body).encode("utf-8")
+                    ).hexdigest(),
+                )
+
+        record = {
+            "audit_id": "LOCUS_AUDIT_0408",
+            "header": "Source-only heading",
+            "content": "A license is required: SOURCE_TEXT_NOT_EXPORTED.",
+            "county_fips": "01001",
+            "classification_human": {"confidence": "Low"},
+        }
+        write_jsonl(self.input_path, [record])
+        original_input = self.input_path.read_bytes()
+        with patch.object(pipeline, "JevClient", ProbabilityClient):
+            pipeline.annotate(**annotation_kwargs(self.input_path, self.ledger_path))
+        before = prompt_ledger_snapshot(self.ledger_path)
+        saved = json.loads(before[1][0][1])
+        output = self.directory / "audit-annotations.jsonl"
+        pipeline.export_annotations_jsonl(
+            input_path=self.input_path,
+            ledger_path=self.ledger_path,
+            output_path=output,
+            include_excluded_header_only=False,
+            allow_partial=False,
+            overwrite=False,
+        )
+        published = json.loads(output.read_text())
+        self.assertEqual(set(published), {"audit_id", "classification_jev"})
+        self.assertEqual(published["audit_id"], record["audit_id"])
+        self.assertEqual(published["classification_jev"], saved)
+        self.assertEqual(saved["final"]["confidence"], "High")
+        confidence = saved["stage_metadata"]["confidence"]["answers"][
+            "confidence_label"
+        ]
+        self.assertEqual(confidence["confidence"], 0.01)
+        self.assertEqual(
+            confidence["probabilities"],
+            {"High": 0.40, "Medium": 0.31, "Low": 0.29},
+        )
+        self.assertEqual(saved["run_details"]["calls_per_record"], 2)
+        self.assertEqual(
+            saved["stage_metadata"]["classification"]["usage"],
+            {"input_tokens": 123, "output_tokens": 17},
+        )
+        self.assertNotIn("SOURCE_TEXT_NOT_EXPORTED", output.read_text())
+        self.assertEqual(prompt_ledger_snapshot(self.ledger_path), before)
+        self.assertEqual(self.input_path.read_bytes(), original_input)
+
+    def test_annotation_identifiers_preserve_ids_and_use_unambiguous_fallbacks(self):
+        cases = [
+            ({"audit_id": "audit-1"}, {"audit_id": "audit-1"}),
+            (
+                {"document_id": "doc-section", "index": 701},
+                {"document_id": "doc-section", "index": 701},
+            ),
+            (
+                {"document_id": "doc-section"},
+                {"document_id": "doc-section", "input_row_index": 9},
+            ),
+            (
+                {"document_id": "doc-section", "index": True},
+                {"document_id": "doc-section", "input_row_index": 9},
+            ),
+            ({}, {"source_id": "locus-v1:fallback", "input_row_index": 9}),
+            (
+                {"custom_id": "row-9", "source_record_id": "record-9"},
+                {
+                    "custom_id": "row-9",
+                    "source_record_id": "record-9",
+                    "source_id": "locus-v1:fallback",
+                    "input_row_index": 9,
+                },
+            ),
+            (
+                {
+                    "file_path": "/private/corpus/code.pdf",
+                    "collection": "ocr_addition",
+                },
+                {
+                    "document_id": opaque_document_id(
+                        "/private/corpus/code.pdf", "ocr_addition"
+                    ),
+                    "input_row_index": 9,
+                },
+            ),
+            (
+                {"file_path": "/private/new/vendor/va/charters/fixture.pdf"},
+                {
+                    "document_id": opaque_document_id(
+                        "new/vendor/va/charters/fixture.pdf", "ocr_addition"
+                    ),
+                    "input_row_index": 9,
+                },
+            ),
+            (
+                {"source_file": "fixes/vendor/va/fixture.pdf"},
+                {
+                    "document_id": opaque_document_id(
+                        "fixes/vendor/va/fixture.pdf", "ocr_addition"
+                    ),
+                    "input_row_index": 9,
+                },
+            ),
+            (
+                {
+                    "file_path": "new/vendor/va/fixture.pdf",
+                    "collection": "original",
+                },
+                {
+                    "document_id": opaque_document_id("new/vendor/va/fixture.pdf"),
+                    "input_row_index": 9,
+                },
+            ),
+            (
+                {"file_path": "new/vendor/va/unrecognized/fixture.pdf"},
+                {
+                    "document_id": opaque_document_id(
+                        "new/vendor/va/unrecognized/fixture.pdf"
+                    ),
+                    "input_row_index": 9,
+                },
+            ),
+        ]
+        for fields, expected in cases:
+            with self.subTest(fields=fields):
+                record = {"header": "Heading", "content": "A rule.", **fields}
+                self.assertEqual(
+                    pipeline.public_annotation_identifiers(
+                        record, 9, "locus-v1:fallback"
+                    ),
+                    expected,
+                )
+
+    def test_annotation_projection_does_not_traverse_irrelevant_source_metadata(self):
+        record = {
+            "document_id": "doc_" + "a" * 24,
+            "index": 89,
+            "header": "Legal heading / including a slash",
+            "content": "A legal rule.",
+            "metadata": {
+                "paths": {
+                    "/first/va/vendor/counties/fixture.jsonl": {"page": 1},
+                    "/second/va/vendor/counties/fixture.jsonl": {"page": 2},
+                }
+            },
+        }
+        before = json.loads(json.dumps(record))
+        identity = pipeline.source_identity(record, 9)
+        self.assertEqual(
+            pipeline.public_annotation_identifiers(record, 9, identity[0]),
+            {"document_id": record["document_id"], "index": 89},
+        )
+        self.assertEqual(record, before)
+        self.assertEqual(pipeline.source_identity(record, 9), identity)
+
+    def test_annotation_export_omits_source_data_without_mutating_ledger(self):
         record = {
             "header": "Rule",
             "content": "A license is required.",
+            "heading_path": [
+                "## LICENSES / PERMITS",
+                r"## CHAPTER 1\GENERAL PROVISIONS",
+                "/TITLE I GENERAL PROVISIONS",
+                r"\TITLE II ADMINISTRATION",
+                "## APPENDIX A.pdf",
+            ],
             "source_file": "/private/source/va/municode/counties/fixture_county.jsonl",
             "document_id": "/private/files/code.pdf",
             "custom_id": "private/row.jsonl:4",
@@ -1468,7 +1791,7 @@ class PipelineTests(unittest.TestCase):
                 (identity[0],),
             ).fetchone()[0]
         output = self.directory / "public.jsonl"
-        pipeline.export_augmented_jsonl(
+        pipeline.export_annotations_jsonl(
             input_path=self.input_path,
             ledger_path=self.ledger_path,
             output_path=output,
@@ -1477,18 +1800,21 @@ class PipelineTests(unittest.TestCase):
             overwrite=False,
         )
         public = json.loads(output.read_text())
-        self.assertNotIn("source_file", public)
-        self.assertNotIn("source_document_slug", public)
-        self.assertEqual(public["classification"], record["classification"])
-        self.assertEqual(public["content"], record["content"])
-        self.assertEqual(public["header"], record["header"])
         self.assertEqual(
-            public["metadata"]["source_files"],
-            [
-                opaque_document_id("/private/appendix.pdf"),
-                {"alternate": opaque_document_id("/private/appendix.txt")},
-            ],
+            set(public),
+            {
+                "document_id",
+                "custom_id",
+                "source_record_id",
+                "input_row_index",
+                "classification_jev",
+            },
         )
+        self.assertEqual(
+            public["document_id"],
+            opaque_document_id("va/municode/counties/fixture_county.jsonl"),
+        )
+        self.assertEqual(public["input_row_index"], 0)
         self.assertEqual(public["classification_jev"]["source"]["id"], identity[0])
         self.assertNotIn(
             "source_file", public["classification_jev"]["source"]["locator"]
@@ -1544,7 +1870,7 @@ class PipelineTests(unittest.TestCase):
         write_jsonl(self.input_path, [row])
         output = self.directory / "output.jsonl"
         with self.assertRaisesRegex(pipeline.InputError, "input hash"):
-            pipeline.export_augmented_jsonl(
+            pipeline.export_annotations_jsonl(
                 input_path=self.input_path,
                 ledger_path=self.ledger_path,
                 output_path=output,
@@ -1563,7 +1889,7 @@ class PipelineTests(unittest.TestCase):
                 self.subTest(output=output),
                 self.assertRaisesRegex(pipeline.InputError, "different files"),
             ):
-                pipeline.export_augmented_jsonl(
+                pipeline.export_annotations_jsonl(
                     input_path=self.input_path,
                     ledger_path=self.ledger_path,
                     output_path=output,
@@ -1684,7 +2010,7 @@ class PipelineTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     pipeline.InputError, "Export provider does not match"
                 ):
-                    pipeline.export_augmented_jsonl(
+                    pipeline.export_annotations_jsonl(
                         input_path=self.input_path,
                         ledger_path=ledger_path,
                         output_path=output,
@@ -1694,7 +2020,7 @@ class PipelineTests(unittest.TestCase):
                         annotation_field=f"classification_{wrong_provider}",
                     )
                 self.assertFalse(output.exists())
-                pipeline.export_augmented_jsonl(
+                pipeline.export_annotations_jsonl(
                     input_path=self.input_path,
                     ledger_path=ledger_path,
                     output_path=output,
@@ -1718,7 +2044,7 @@ class PipelineTests(unittest.TestCase):
         output = self.directory / "output.jsonl"
         output.write_text("previous complete export\n", encoding="utf-8")
         with self.assertRaisesRegex(pipeline.InputError, "incomplete"):
-            pipeline.export_augmented_jsonl(
+            pipeline.export_annotations_jsonl(
                 input_path=self.input_path,
                 ledger_path=self.ledger_path,
                 output_path=output,
@@ -1746,7 +2072,7 @@ class PipelineTests(unittest.TestCase):
         with patch("neurips2026_locus.pipeline.JevClient", FakeJevClient):
             pipeline.annotate(**kwargs)
         output = self.directory / "selected.jsonl"
-        counts = pipeline.export_augmented_jsonl(
+        counts = pipeline.export_annotations_jsonl(
             input_path=self.input_path,
             ledger_path=self.ledger_path,
             output_path=output,
@@ -1756,8 +2082,11 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(counts["exported"], 2)
         self.assertEqual(
-            [json.loads(line)["content"] for line in output.read_text().splitlines()],
-            ["", "First rule."],
+            [
+                json.loads(line)["input_row_index"]
+                for line in output.read_text().splitlines()
+            ],
+            [0, 1],
         )
 
     def test_source_change_during_export_does_not_publish_or_replace_a_result(self):
@@ -1774,7 +2103,7 @@ class PipelineTests(unittest.TestCase):
 
         with patch.object(pipeline, "iter_jsonl", changed_after_read):
             with self.assertRaisesRegex(pipeline.InputError, "changed during export"):
-                pipeline.export_augmented_jsonl(
+                pipeline.export_annotations_jsonl(
                     input_path=self.input_path,
                     ledger_path=self.ledger_path,
                     output_path=output,
@@ -1810,7 +2139,7 @@ class PipelineTests(unittest.TestCase):
                 )
                 db.commit()
                 with self.subTest(field=field), self.assertRaises(pipeline.InputError):
-                    pipeline.export_augmented_jsonl(
+                    pipeline.export_annotations_jsonl(
                         input_path=self.input_path,
                         ledger_path=self.ledger_path,
                         output_path=output,
@@ -1840,7 +2169,7 @@ class PipelineTests(unittest.TestCase):
             side_effect=create_destination_then_link,
         ):
             with self.assertRaises(FileExistsError):
-                pipeline.export_augmented_jsonl(
+                pipeline.export_annotations_jsonl(
                     input_path=self.input_path,
                     ledger_path=self.ledger_path,
                     output_path=output,
@@ -1871,7 +2200,7 @@ class PipelineTests(unittest.TestCase):
                 )
                 db.commit()
                 with self.subTest(field=field), self.assertRaises(pipeline.InputError):
-                    pipeline.export_augmented_jsonl(
+                    pipeline.export_annotations_jsonl(
                         input_path=self.input_path,
                         ledger_path=self.ledger_path,
                         output_path=output,

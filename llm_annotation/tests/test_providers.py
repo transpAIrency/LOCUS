@@ -535,6 +535,94 @@ class ClientTests(unittest.TestCase):
                 self.assertEqual(status["output_files"], [])
                 self.assertEqual(status["error_files"], [])
 
+    def test_google_status_accepts_named_states_and_optional_file_metadata(self):
+        client = object.__new__(google_batch.GoogleBatchClient)
+        client.client = Mock()
+        for state in (
+            "JOB_STATE_SUCCEEDED",
+            "SUCCEEDED",
+            SimpleNamespace(name="JOB_STATE_SUCCEEDED"),
+        ):
+            for destination, source in (
+                (None, None),
+                ({"file_name": "files/results"}, {"file_name": "files/input"}),
+                (SimpleNamespace(), {}),
+            ):
+                with self.subTest(state=state, destination=destination):
+                    client.client.batches.get.return_value = SimpleNamespace(
+                        name="batches/1",
+                        state=state,
+                        dest=destination,
+                        src=source,
+                        model=None,
+                        display_name=None,
+                    )
+                    status = client.status("batches/1")
+                    self.assertTrue(status["done"])
+                    self.assertFalse(status["failed"])
+                    self.assertEqual(status["status"], "completed")
+                    self.assertEqual(
+                        status["output_files"],
+                        ["files/results"] if isinstance(destination, dict) else [],
+                    )
+                    self.assertEqual(
+                        status["input_file_id"],
+                        "files/input" if isinstance(source, dict) and source else None,
+                    )
+        client.client.files.download.assert_not_called()
+
+    def test_google_unknown_or_missing_state_is_an_actionable_error(self):
+        client = object.__new__(google_batch.GoogleBatchClient)
+        client.client = Mock()
+        for state in (
+            None,
+            "",
+            "JOB_STATE_UNSPECIFIED",
+            "JOB_STATE_FUTURE_UNRECOGNIZED",
+            SimpleNamespace(),
+        ):
+            with self.subTest(state=state):
+                client.client.batches.get.return_value = SimpleNamespace(
+                    name="batches/1", state=state
+                )
+                with self.assertRaises(ValueError) as raised:
+                    client.status("batches/1")
+                message = str(raised.exception).lower()
+                self.assertIn("batches/1", message)
+                self.assertIn("state", message)
+                self.assertIn("check", message)
+        client.client.files.download.assert_not_called()
+
+    def test_google_cleanup_validates_file_ids_and_tolerates_missing_files(self):
+        client = object.__new__(google_batch.GoogleBatchClient)
+        client.client = Mock()
+        client.delete_file("files/input-123_abc")
+        client.client.files.delete.assert_called_once_with(name="files/input-123_abc")
+        client.client.files.delete.reset_mock()
+        for file_id in (
+            "https://example.org/files/input-1",
+            "files/input-1?key=secret",
+            "files/input-1/other",
+            "files/../input-1",
+            "../files/input-1",
+            "batches/input-1",
+            "files/",
+            "files/input-1\n",
+        ):
+            with self.subTest(file_id=file_id), self.assertRaises(ValueError):
+                client.delete_file(file_id)
+        client.client.files.delete.assert_not_called()
+        missing = RuntimeError("already removed")
+        missing.code = 404
+        client.client.files.delete.side_effect = missing
+        client.delete_file("files/input-1")
+        denied = RuntimeError("permission denied")
+        denied.code = 403
+        client.client.files.delete.side_effect = denied
+        with self.assertRaises(RuntimeError) as raised:
+            client.delete_file("files/input-1")
+        self.assertIs(raised.exception, denied)
+
     def test_upload_uses_batch_purpose_or_jsonl_mime_type(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "requests.jsonl"

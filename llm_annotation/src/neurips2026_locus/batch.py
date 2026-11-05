@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from concurrent.futures import CancelledError
 from contextlib import ExitStack, closing
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import gzip
 from hashlib import sha256
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -34,7 +37,13 @@ from .generative import (
     contract_hash,
     parse_classification,
 )
-from .jev import DEFAULT_ENDPOINT, JevError, load_dotenv, retry_delay
+from .jev import (
+    DEFAULT_ENDPOINT,
+    JevError,
+    RetryDelayExceeded,
+    load_dotenv,
+    retry_delay,
+)
 from .files import file_stamp
 from .pipeline import (
     AnnotationLedger,
@@ -49,7 +58,7 @@ from .pipeline import (
     check_cancelled,
     canonical_json,
     distinct_paths,
-    export_augmented_jsonl,
+    export_annotations_jsonl,
     indexed_jsonl,
     iter_jsonl,
     ledger_metadata,
@@ -60,7 +69,284 @@ from .pipeline import (
 )
 
 MAX_SHARD_BYTES = 50 * 1024 * 1024
+MAX_BATCH_ROWS = 50_000
+RETRYABLE_OPERATION_EXIT_CODE = 4
 DEFAULT_GOOGLE_MODEL = "gemini-3.8-flash"
+
+
+def shard_byte_limit(provider: str) -> int:
+    """Bound uploads below each API's file limit; permit a small offline test budget."""
+    if MAX_SHARD_BYTES != 50 * 1024 * 1024:
+        return MAX_SHARD_BYTES
+    return {"openai": 160 * 1024 * 1024, "google": 1024 * 1024 * 1024}[provider]
+
+
+def _error_payload(error) -> dict:
+    """Read structured provider errors, never their request or exception repr."""
+    body = error if isinstance(error, dict) else getattr(error, "body", None)
+    if not isinstance(body, dict):
+        body = getattr(error, "response_json", None)
+    if not isinstance(body, dict):
+        body = getattr(error, "details", None)
+    if not isinstance(body, dict):
+        return {}
+    return body.get("error", body) if isinstance(body.get("error", body), dict) else {}
+
+
+def _http_status(error) -> int | None:
+    response = getattr(error, "response", None)
+    payload = _error_payload(error)
+    return next(
+        (
+            value
+            for value in (
+                getattr(error, "status_code", None),
+                getattr(error, "code", None),
+                getattr(response, "status_code", None),
+                payload.get("status_code"),
+                payload.get("code"),
+            )
+            if type(value) is int
+        ),
+        None,
+    )
+
+
+def _queue_limit(error) -> bool:
+    """Recognize a provider's explicit queued-token quota rejection."""
+    payload = _error_payload(error)
+    text = " ".join(
+        str(payload.get(key, "")) for key in ("code", "status", "message", "details")
+    )
+    return bool(
+        re.search(
+            r"enqueued|queue|batch.{0,40}token|token.{0,40}(?:limit|quota)", text, re.I
+        )
+    )
+
+
+def _sanitized_message(value) -> str | None:
+    """Keep the provider's guidance while removing credentials and body dumps."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = re.sub(r"[\x00-\x1f\x7f]+", " ", value)
+    value = re.sub(
+        r"(?i)\bauthorization[\"']?\s*[:=]\s*[\"']?(?:bearer\s+)?[^\s,;\"']+",
+        "Authorization: [redacted]",
+        value,
+    )
+    value = re.sub(r"(?i)\bbearer\s+[^\s,;\"']+", "Bearer [redacted]", value)
+    value = re.sub(r"\b(?:sk-[A-Za-z0-9_-]+|AIza[A-Za-z0-9_-]+)\b", "[redacted]", value)
+    value = re.sub(
+        r"(?i)\b(?:api[ _-]*key|access[ _-]*token|refresh[ _-]*token|token|secret)"
+        r"[\"']?\s*[:=]\s*[\"']?[^\s,;\"'}]+",
+        "credential: [redacted]",
+        value,
+    )
+    value = re.sub(
+        r"(?i)([?&](?:key|api_key|token|access_token)=)[^&\s]+",
+        r"\1[redacted]",
+        value,
+    )
+    value = re.split(
+        r"(?i)\b(?:request(?:\s+body)?|payload)[\"']?\s*[:=]\s*[\[{]",
+        value,
+        maxsplit=1,
+    )[0]
+    return " ".join(value.split())[:600]
+
+
+def _transient_operation_error(error) -> bool:
+    """Classify control-plane failures; never use this to replay creation."""
+    status = _http_status(error)
+    if status is not None:
+        return status in {408, 429} or 500 <= status <= 599
+    import httpx
+
+    cause = error
+    for _ in range(6):
+        if isinstance(cause, (httpx.TransportError, ConnectionError, TimeoutError)):
+            return True
+        cause = cause.__cause__
+        if cause is None:
+            break
+    return False
+
+
+def provider_error_details(error) -> dict:
+    """Keep actionable operational facts without echoing provider-supplied text."""
+    payload = _error_payload(error)
+    status = _http_status(error)
+    code = payload.get("code")
+    if not isinstance(code, str):
+        code = payload.get("status") or payload.get("type")
+    if not isinstance(code, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", code):
+        code = None
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    request_id_value = (
+        getattr(error, "request_id", None)
+        or payload.get("request_id")
+        or headers.get("x-request-id")
+        or headers.get("x-goog-request-id")
+    )
+    if not isinstance(request_id_value, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.:-]{1,200}", request_id_value
+    ):
+        request_id_value = None
+    if status == 429:
+        message = (
+            "Queued-token quota reached; waiting and reducing oversized shards"
+            if _queue_limit(error)
+            else "Provider quota or rate limit reached; waiting before retrying"
+        )
+    elif status == 401:
+        message = "Provider rejected the API credentials"
+    elif status == 403:
+        message = "Provider denied access to this model or project"
+    elif status == 413:
+        message = "Provider rejected the request size; reduce the batch size"
+    elif status in {400, 404, 405, 406, 411, 415, 422}:
+        message = (
+            "Provider rejected the request; check model, parameters, and project access"
+        )
+    elif status == 402:
+        message = "Provider rejected billing; check account credit and spending limits"
+    elif status is not None and status >= 500:
+        message = "Provider server failed; batch creation may have succeeded"
+    else:
+        message = "Provider operation failed; inspect provider status before retrying"
+    message = (
+        _sanitized_message(payload.get("message"))
+        or _sanitized_message(getattr(error, "message", None))
+        or message
+    )
+    if isinstance(error, getattr(google_batch, "GoogleBatchStatusError", ())):
+        message = error.safe_message
+    return {
+        "http_status": status,
+        "code": code,
+        "message": message,
+        "request_id": request_id_value,
+    }
+
+
+def _quota_delay(error, attempts: int) -> float:
+    """Honor Retry-After, including long waits, without blocking the CLI."""
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    value = headers.get("Retry-After") or headers.get("retry-after")
+    try:
+        delay = float(value)
+    except (TypeError, ValueError):
+        try:
+            deadline = parsedate_to_datetime(value)
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            delay = deadline.timestamp() - time.time()
+        except (TypeError, ValueError, OverflowError):
+            delay = math.nan
+    if math.isfinite(delay):
+        return max(1.0, delay)
+    return min(60.0 * 2 ** min(attempts - 1, 6), 3600.0)
+
+
+def _retry_at_utc(value: float) -> str:
+    return (
+        datetime.fromtimestamp(value, timezone.utc).isoformat().replace("+00:00", "Z")
+    )
+
+
+def _submit_job(db, config, client, number, file_id, name, rows, stop_event) -> bool:
+    """Retry only a definite rejection; uncertain creation always needs recovery."""
+    check_cancelled(stop_event)
+    with db:
+        db.execute("UPDATE batch_jobs SET state='submitting' WHERE number=?", (number,))
+    if stop_event is not None and stop_event.is_set():
+        with db:
+            db.execute(
+                "UPDATE batch_jobs SET state='preparing' WHERE number=?", (number,)
+            )
+        raise CancelledError()
+    try:
+        remote_id = client.submit(file_id, config["model"], name)
+    except Exception as exc:
+        details = provider_error_details(exc)
+        status = details["http_status"]
+        with db:
+            db.execute(
+                "INSERT OR REPLACE INTO metadata VALUES (?, ?)",
+                (f"batch_error:{number}", canonical_json(details)),
+            )
+        if status == 429:
+            previous = db.execute(
+                "SELECT value FROM metadata WHERE key='batch_quota_attempts'"
+            ).fetchone()
+            attempts = int(previous[0]) + 1 if previous else 1
+            retry_at = time.time() + _quota_delay(exc, attempts)
+            schedule = {
+                "retry_at": retry_at,
+                "attempts": attempts,
+                "error": details,
+                "shrink": _queue_limit(exc),
+            }
+            with db:
+                db.execute(
+                    "UPDATE batch_jobs SET state='quota_wait' WHERE number=?", (number,)
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO metadata VALUES (?, ?)",
+                    (f"batch_quota:{number}", canonical_json(schedule)),
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO metadata "
+                    "VALUES ('batch_quota_attempts', ?)",
+                    (str(attempts),),
+                )
+            print(
+                json.dumps(
+                    {
+                        "provider": config["provider"],
+                        "batch_number": number,
+                        "phase": "quota_wait",
+                        "retry_at_utc": _retry_at_utc(retry_at),
+                        "error": details,
+                    }
+                ),
+                flush=True,
+            )
+            return False
+        if status in {400, 401, 402, 403, 404, 405, 406, 411, 413, 415, 422}:
+            with db:
+                db.execute(
+                    "UPDATE batch_jobs SET state='preparing' WHERE number=?", (number,)
+                )
+            raise InputError(
+                f"{config['provider']} rejected batch {number}: "
+                f"{canonical_json(details)}; correct the cause and resume"
+            ) from None
+        raise InputError(
+            f"{config['provider']} batch operation failed for batch {number}: "
+            f"{canonical_json(details)}; "
+            "submission is uncertain; attach its remote ID before continuing"
+        ) from None
+    if not isinstance(remote_id, str) or not remote_id:
+        raise InputError(
+            f"Batch {number} returned no job ID; submission may have succeeded"
+        )
+    with db:
+        db.execute(
+            "UPDATE batch_jobs SET remote_id=?, state='submitted' WHERE number=?",
+            (remote_id, number),
+        )
+        db.execute("DELETE FROM metadata WHERE key=?", (f"batch_quota:{number}",))
+        db.execute("DELETE FROM metadata WHERE key='batch_quota_attempts'")
+    print(
+        json.dumps({"submitted": remote_id, "batch_number": number, "rows": rows}),
+        flush=True,
+    )
+    check_cancelled(stop_event)
+    return True
 
 
 def retry_provider_read(
@@ -73,37 +359,14 @@ def retry_provider_read(
     and cannot duplicate annotations or submit new model work. Invalid data
     and authentication errors remain immediate failures.
     """
-    import httpx  # Present with either native SDK; offline commands need neither.
-
     for attempt in range(1, 4):
         check_cancelled(stop_event)
         try:
             return operation()
         except Exception as exc:
             response = getattr(exc, "response", None)
-            status = next(
-                (
-                    value
-                    for value in (
-                        getattr(exc, "status_code", None),
-                        getattr(exc, "code", None),
-                        getattr(response, "status_code", None),
-                    )
-                    if type(value) is int
-                ),
-                None,
-            )
-            transient = status in {408, 429, 500, 502, 503, 504, 529}
-            if status is None:
-                cause = exc
-                for _ in range(6):
-                    if isinstance(cause, httpx.TransportError):
-                        transient = True
-                        break
-                    cause = cause.__cause__
-                    if cause is None:
-                        break
-            if not transient or attempt == 3:
+            status = _http_status(exc)
+            if not _transient_operation_error(exc) or attempt == 3:
                 raise
             check_cancelled(stop_event)
             delay = retry_delay(getattr(response, "headers", None) or {}, attempt)
@@ -325,7 +588,10 @@ def initialize(
                     )
                     continue
                 request = request_for(record, source_id, config)
-                if len(canonical_json(request).encode("utf-8")) + 1 > MAX_SHARD_BYTES:
+                if (
+                    len(canonical_json(request).encode("utf-8")) + 1
+                    > shard_byte_limit(config["provider"])
+                ):
                     raise InputError(
                         f"Source row {index} exceeds the batch shard byte limit"
                     )
@@ -348,8 +614,40 @@ def initialize(
         db.execute("INSERT INTO metadata VALUES ('batch_total', ?)", (str(count),))
 
 
+def _row_retry_passes(db: sqlite3.Connection) -> int:
+    row = db.execute(
+        "SELECT value FROM metadata WHERE key='row_retry_passes'"
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
 def summary(db: sqlite3.Connection) -> dict:
     """Report bounded progress counts and actionable unresolved submissions."""
+    deferred = []
+    for number, encoded in db.execute(
+        "SELECT number, value FROM batch_jobs JOIN metadata ON key='batch_quota:' || number "
+        "WHERE state='quota_wait' ORDER BY number"
+    ):
+        schedule = json.loads(encoded)
+        deferred.append(
+            {
+                "batch_number": number,
+                "retry_at": schedule["retry_at"],
+                "retry_at_utc": _retry_at_utc(schedule["retry_at"]),
+                "error": schedule["error"],
+            }
+        )
+    next_retry = min((item["retry_at"] for item in deferred), default=None)
+    operation_row = db.execute(
+        "SELECT value FROM metadata WHERE key='batch_operation_retry'"
+    ).fetchone()
+    operation_retry = json.loads(operation_row[0])["retry_at"] if operation_row else None
+    pending_cleanup = sum(
+        len(json.loads(encoded)["pending"])
+        for (encoded,) in db.execute(
+            "SELECT value FROM metadata WHERE key GLOB 'batch_cleanup:*'"
+        )
+    )
     return {
         "requests": int(
             db.execute("SELECT value FROM metadata WHERE key='batch_total'").fetchone()[
@@ -365,9 +663,20 @@ def summary(db: sqlite3.Connection) -> dict:
         "annotated": db.execute(
             "SELECT COUNT(*) FROM annotations WHERE status='annotated'"
         ).fetchone()[0],
+        "retry_passes": _row_retry_passes(db),
         "batch_states": dict(
             db.execute("SELECT state, COUNT(*) FROM batch_jobs GROUP BY state")
         ),
+        "deferred_jobs": deferred,
+        "next_retry_at": next_retry,
+        "next_retry_at_utc": (
+            _retry_at_utc(next_retry) if next_retry is not None else None
+        ),
+        "operation_retry_at": operation_retry,
+        "operation_retry_at_utc": (
+            _retry_at_utc(operation_retry) if operation_retry is not None else None
+        ),
+        "pending_cleanup_files": pending_cleanup,
         "uncertain_submissions": [
             dict(zip(("batch_number", "display_name", "input_file_id"), row))
             for row in db.execute(
@@ -409,6 +718,60 @@ def submit_ready(
     active = db.execute(
         "SELECT COUNT(*) FROM batch_jobs WHERE state='submitted'"
     ).fetchone()[0]
+    waiting = db.execute(
+        "SELECT number, file_id, display_name FROM batch_jobs WHERE state='quota_wait' ORDER BY number"
+    ).fetchall()
+    for number, file_id, name in waiting:
+        encoded = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (f"batch_quota:{number}",)
+        ).fetchone()
+        if encoded is None:
+            raise InputError(f"Deferred batch {number} has no retry schedule")
+        schedule = json.loads(encoded[0])
+        if time.time() < schedule["retry_at"] or active >= max_inflight:
+            return
+        rows = db.execute(
+            "SELECT COUNT(*) FROM batch_requests WHERE job_number=?", (number,)
+        ).fetchone()[0]
+        if schedule["shrink"] and active == 0 and rows > 1:
+            smaller = max(1, rows // 2)
+            with db:
+                db.execute(
+                    "UPDATE batch_requests SET job_number=NULL WHERE job_number=?",
+                    (number,),
+                )
+                db.execute(
+                    "UPDATE batch_jobs SET state='quota_split' WHERE number=?",
+                    (number,),
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO metadata VALUES ('batch_size_limit', ?)",
+                    (str(smaller),),
+                )
+            print(
+                json.dumps(
+                    {
+                        "phase": "reducing_batch_size",
+                        "batch_number": number,
+                        "previous_rows": rows,
+                        "batch_size_limit": smaller,
+                    }
+                ),
+                flush=True,
+            )
+            continue
+        if not _submit_job(
+            db, config, client, number, file_id, name, rows, stop_event
+        ):
+            return
+        active += 1
+    limit = db.execute(
+        "SELECT value FROM metadata WHERE key='batch_size_limit'"
+    ).fetchone()
+    if limit is not None:
+        batch_size = min(batch_size, int(limit[0]))
+        if batch_size < 1:
+            raise InputError("Ledger contains an invalid adaptive batch size")
     opener = gzip.open if input_path.suffix == ".gz" else open
     with (
         opener(input_path, "rb") as source,
@@ -441,11 +804,13 @@ def submit_ready(
                             "Reconstructed request differs from its prepared hash"
                         )
                     payload = (canonical_json(request) + "\n").encode("utf-8")
-                    if len(payload) > MAX_SHARD_BYTES:
+                    if len(payload) > shard_byte_limit(config["provider"]):
                         raise InputError(
                             f"Source row {index} exceeds the batch shard byte limit"
                         )
-                    if ids and size + len(payload) > MAX_SHARD_BYTES:
+                    if ids and size + len(payload) > shard_byte_limit(
+                        config["provider"]
+                    ):
                         break
                     handle.write(payload)
                     ids.append(key)
@@ -475,71 +840,66 @@ def submit_ready(
                     (file_id, number),
                 )
             check_cancelled(stop_event)
-            with db:
-                db.execute(
-                    "UPDATE batch_jobs SET state='submitting' WHERE number=?", (number,)
-                )
-            if stop_event is not None and stop_event.is_set():
-                # The create call has not started: this is not uncertain work.
-                with db:
-                    db.execute(
-                        "UPDATE batch_jobs SET state='preparing' WHERE number=?",
-                        (number,),
-                    )
-                raise CancelledError()
-            try:
-                remote_id = client.submit(file_id, config["model"], name)
-            except Exception as exc:
-                status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
-                if type(status) is int and status in {
-                    400,
-                    401,
-                    402,
-                    403,
-                    404,
-                    405,
-                    406,
-                    411,
-                    413,
-                    415,
-                    422,
-                    429,
-                }:
-                    # A definite rejection is different from a lost create
-                    # response. Returning these rows to preparing lets a later
-                    # invocation change shard size or credentials and retry.
-                    with db:
-                        db.execute(
-                            "UPDATE batch_jobs SET state='preparing' WHERE number=?",
-                            (number,),
-                        )
-                    raise InputError(
-                        f"{config['provider']} rejected batch {number} with HTTP {status}; correct the cause and resume"
-                    ) from None
-                raise
-            if not isinstance(remote_id, str) or not remote_id:
-                raise InputError(
-                    f"Batch {number} returned no job ID; submission may have succeeded"
-                )
-            with db:
-                db.execute(
-                    "UPDATE batch_jobs SET remote_id=?, state='submitted' WHERE number=?",
-                    (remote_id, number),
-                )
-            print(
-                json.dumps(
-                    {"submitted": remote_id, "batch_number": number, "rows": len(ids)}
-                ),
-                flush=True,
-            )
-            check_cancelled(stop_event)
+            if not _submit_job(
+                db, config, client, number, file_id, name, len(ids), stop_event
+            ):
+                return
+
+
+def _write_annotation(db, source_id, index, digest, status, annotation) -> None:
+    """Replace only a failed checkpoint, never a completed paid annotation."""
+    cursor = db.execute(
+        """INSERT INTO annotations VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id) DO UPDATE SET
+            source_index=excluded.source_index, status=excluded.status,
+            annotation_json=excluded.annotation_json, created_at_utc=excluded.created_at_utc
+        WHERE annotations.status='failed' AND annotations.source_sha256=excluded.source_sha256""",
+        (source_id, index, digest, status, canonical_json(annotation), utc_now()),
+    )
+    if cursor.rowcount != 1:
+        raise InputError("Refusing to replace a completed annotation or changed source")
+
+
+def _record_batch_failures(db, config, number, remote_id) -> None:
+    """Make native failures visible to the same strict exporter as Jev failures."""
+    for source_id, index, digest, encoded_info, error in db.execute(
+        "SELECT source_id, source_index, source_sha256, source_info, error "
+        "FROM batch_requests WHERE job_number=? AND result_json IS NULL AND error IS NOT NULL",
+        (number,),
+    ):
+        try:
+            details = decode_json(error)
+        except ValueError:
+            details = {"message": error}
+        if not isinstance(details, dict):
+            details = {"message": "Native batch request failed"}
+        annotation = {
+            "prompt_version": POLICY_VERSION,
+            "status": "failed",
+            "source": {
+                "id": source_id,
+                "sha256": digest,
+                "locator": json.loads(encoded_info)["locator"],
+            },
+            "error": {"type": "ProviderBatchError", **details},
+            "run_details": {
+                "provider": config["provider"],
+                "request_submission": "batch",
+                "calls_per_record": 1,
+                "requested_model": config["model"],
+                "batch_id": remote_id,
+            },
+        }
+        _write_annotation(db, source_id, index, digest, "failed", annotation)
 
 
 def collect_results(
-    ledger: AnnotationLedger, config: dict, client, *, stop_event=None
+    ledger: AnnotationLedger, config: dict, client, *, stop_event=None, cleanup=False
 ) -> None:
     """Atomically collect each shard; join by ID, never by returned order."""
     db = ledger.connection
+    if cleanup:
+        cleanup_remote_files(ledger, config, client, stop_event=stop_event)
     builder = db.execute(
         "SELECT value FROM metadata WHERE key='request_builder_sha256'"
     ).fetchone()
@@ -579,6 +939,15 @@ def collect_results(
                         )
                     seen.add(key)
                     result = None
+                    if error is not None:
+                        if isinstance(raw.get("error"), dict):
+                            error = canonical_json(provider_error_details(raw["error"]))
+                        else:
+                            error = canonical_json(
+                                {
+                                    "message": "Provider returned an incomplete or invalid classification response"
+                                }
+                            )
                     if error is None:
                         try:
                             classification = parse_classification(value)
@@ -599,8 +968,12 @@ def collect_results(
                             result = canonical_json(
                                 {"classification": classification, "metadata": metadata}
                             )
-                        except ContractError as exc:
-                            error = str(exc)
+                        except ContractError:
+                            error = canonical_json(
+                                {
+                                    "message": "Provider classification does not satisfy the annotation schema"
+                                }
+                            )
                     db.execute(
                         "UPDATE batch_requests SET result_json=?, error=? WHERE id=?",
                         (result, error, key),
@@ -639,23 +1012,63 @@ def collect_results(
                                 "sent_text_characters": sent,
                             },
                         }
-                        db.execute(
-                            "INSERT INTO annotations VALUES (?, ?, ?, 'annotated', ?, ?)",
-                            (
-                                source_id,
-                                index,
-                                digest,
-                                canonical_json(annotation),
-                                utc_now(),
-                            ),
+                        _write_annotation(
+                            db, source_id, index, digest, "annotated", annotation
                         )
             db.execute(
                 "UPDATE batch_requests SET error=? WHERE job_number=? AND result_json IS NULL AND error IS NULL",
                 (f"No result returned; batch status {status['status']}", number),
             )
+            _record_batch_failures(db, config, number, remote_id)
+            if config["provider"] == "google":
+                input_file = db.execute(
+                    "SELECT file_id FROM batch_jobs WHERE number=?", (number,)
+                ).fetchone()[0]
+                owned_files = list(
+                    dict.fromkeys(
+                        file_id
+                        for file_id in (
+                            [input_file] + status["output_files"] + status["error_files"]
+                        )
+                        if isinstance(file_id, str) and file_id
+                    )
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO metadata VALUES (?, ?)",
+                    (
+                        f"batch_cleanup:{number}",
+                        canonical_json({"pending": owned_files, "deleted": []}),
+                    ),
+                )
             db.execute(
                 "UPDATE batch_jobs SET state='collected' WHERE number=?", (number,)
             )
+        if cleanup:
+            cleanup_remote_files(ledger, config, client, stop_event=stop_event)
+
+
+def cleanup_remote_files(ledger, config, client, *, stop_event=None) -> None:
+    """Delete only this ledger's durably collected Google files, one checkpoint at a time."""
+    if config["provider"] != "google":
+        raise InputError("Remote file cleanup is available only for Google")
+    db = ledger.connection
+    schedules = db.execute(
+        "SELECT key, value FROM metadata JOIN batch_jobs "
+        "ON key='batch_cleanup:' || number WHERE state='collected' ORDER BY number"
+    ).fetchall()
+    for key, encoded in schedules:
+        schedule = json.loads(encoded)
+        while schedule["pending"]:
+            check_cancelled(stop_event)
+            file_id = schedule["pending"][0]
+            client.delete_file(file_id)
+            schedule["pending"].pop(0)
+            schedule["deleted"].append(file_id)
+            with db:
+                db.execute(
+                    "UPDATE metadata SET value=? WHERE key=?",
+                    (canonical_json(schedule), key),
+                )
 
 
 def attach(ledger: AnnotationLedger, args, config: dict, client) -> None:
@@ -711,9 +1124,12 @@ def reset_uncertain(ledger: AnnotationLedger, number: int | None) -> None:
 def run(args, *, stop_event=None, expected_input_sha256: str | None = None) -> int:
     """Entry point selected by the shared --provider switch."""
     check_cancelled(stop_event)
-    if args.batch_size > 5000:
+    cleanup = getattr(args, "cleanup_remote_files", False)
+    if cleanup and args.provider != "google":
+        raise InputError("--cleanup-remote-files is available only for Google")
+    if args.batch_size > MAX_BATCH_ROWS:
         raise InputError(
-            "--batch-size must not exceed 5000 (bounded result-download memory)"
+            f"--batch-size must not exceed {MAX_BATCH_ROWS} (bounded result-download memory)"
         )
     if args.dry_run and args.export_only:
         raise InputError("--dry-run and --export-only cannot be used together")
@@ -753,7 +1169,7 @@ def run(args, *, stop_event=None, expected_input_sha256: str | None = None) -> i
         print(
             json.dumps(
                 {
-                    "export": export_augmented_jsonl(
+                    "export": export_annotations_jsonl(
                         input_path=args.input,
                         ledger_path=args.ledger,
                         output_path=args.output,
@@ -812,6 +1228,34 @@ def run(args, *, stop_event=None, expected_input_sha256: str | None = None) -> i
                 check_cancelled(stop_event)
                 load_dotenv(args.env_file)
                 key = api_key(args.provider, args.api_key_env)
+                if action == "attach" and (not args.batch_number or not args.batch_id):
+                    raise InputError("Recovery requires --batch-number and --batch-id")
+                operation_row = ledger.connection.execute(
+                    "SELECT value FROM metadata WHERE key='batch_operation_retry'"
+                ).fetchone()
+                operation_retry = json.loads(operation_row[0]) if operation_row else None
+                if operation_retry and time.time() < operation_retry["retry_at"]:
+                    uncertain = ledger.connection.execute(
+                        "SELECT number FROM batch_jobs WHERE state='submitting' LIMIT 1"
+                    ).fetchone()
+                    if uncertain is not None:
+                        raise InputError(
+                            f"Batch {uncertain[0]} has an uncertain submission; "
+                            "attach its remote ID before continuing"
+                        )
+                    print(
+                        json.dumps(
+                            {
+                                "provider": args.provider,
+                                "phase": "operation_wait",
+                                "action": action,
+                                "retry_at_utc": _retry_at_utc(operation_retry["retry_at"]),
+                                "error": operation_retry["error"],
+                            }
+                        ),
+                        flush=True,
+                    )
+                    return RETRYABLE_OPERATION_EXIT_CODE
                 client_class = (
                     openai_batch.OpenAIBatchClient
                     if args.provider == "openai"
@@ -828,9 +1272,16 @@ def run(args, *, stop_event=None, expected_input_sha256: str | None = None) -> i
                         if action in {"retry", "submit"}:
                             if action == "retry":
                                 with ledger.connection:
-                                    ledger.connection.execute(
+                                    reset = ledger.connection.execute(
                                         "UPDATE batch_requests SET error=NULL, job_number=NULL WHERE error IS NOT NULL"
                                     )
+                                    if reset.rowcount:
+                                        passes = _row_retry_passes(ledger.connection) + 1
+                                        ledger.connection.execute(
+                                            "INSERT OR REPLACE INTO metadata VALUES "
+                                            "('row_retry_passes', ?)",
+                                            (str(passes),),
+                                        )
                             submit_ready(
                                 ledger,
                                 args.input,
@@ -843,7 +1294,11 @@ def run(args, *, stop_event=None, expected_input_sha256: str | None = None) -> i
                         elif action == "collect":
                             retry_provider_read(
                                 lambda: collect_results(
-                                    ledger, config, client, stop_event=stop_event
+                                    ledger,
+                                    config,
+                                    client,
+                                    stop_event=stop_event,
+                                    cleanup=cleanup,
                                 ),
                                 provider=args.provider,
                                 stop_event=stop_event,
@@ -872,20 +1327,75 @@ def run(args, *, stop_event=None, expected_input_sha256: str | None = None) -> i
                                         }
                                     )
                                 )
-                    except (InputError, ContractError, CancelledError, JevError):
+                    except (InputError, ContractError, CancelledError):
                         raise
                     except Exception as exc:
+                        if isinstance(exc, JevError) and not isinstance(
+                            exc, RetryDelayExceeded
+                        ):
+                            raise
+                        provider_error = (
+                            exc.__context__
+                            if isinstance(exc, RetryDelayExceeded)
+                            and exc.__context__ is not None
+                            else exc
+                        )
+                        details = provider_error_details(provider_error)
+                        uncertain = ledger.connection.execute(
+                            "SELECT 1 FROM batch_jobs WHERE state='submitting' LIMIT 1"
+                        ).fetchone()
+                        if (
+                            action in {"collect", "status", "attach", "submit", "retry"}
+                            and uncertain is None
+                            and _transient_operation_error(provider_error)
+                        ):
+                            attempts = operation_retry["attempts"] + 1 if operation_retry else 1
+                            retry_at = time.time() + _quota_delay(provider_error, attempts)
+                            with ledger.connection:
+                                ledger.connection.execute(
+                                    "INSERT OR REPLACE INTO metadata VALUES ('batch_operation_retry', ?)",
+                                    (
+                                        canonical_json(
+                                            {
+                                                "retry_at": retry_at,
+                                                "attempts": attempts,
+                                                "action": action,
+                                                "error": details,
+                                            }
+                                        ),
+                                    ),
+                                )
+                            print(
+                                json.dumps(
+                                    {
+                                        "provider": args.provider,
+                                        "phase": "retryable_operation_failure",
+                                        "action": action,
+                                        "retry_at_utc": _retry_at_utc(retry_at),
+                                        "error": details,
+                                    }
+                                ),
+                                flush=True,
+                            )
+                            return RETRYABLE_OPERATION_EXIT_CODE
                         raise InputError(
-                            f"{args.provider} batch operation failed ({type(exc).__name__}); check provider status before retrying"
+                            f"{args.provider} batch operation failed: {canonical_json(details)}; "
+                            "check provider status before retrying"
                         ) from None
+                    else:
+                        with ledger.connection:
+                            ledger.connection.execute(
+                                "DELETE FROM metadata WHERE key='batch_operation_retry'"
+                            )
             progress = summary(ledger.connection)
             print(json.dumps(progress, sort_keys=True))
     check_cancelled(stop_event)
-    if args.output:
+    complete = progress["annotated"] == progress["requests"] and not progress["errors"]
+    if args.output and (complete or args.allow_partial_export):
         print(
             json.dumps(
                 {
-                    "export": export_augmented_jsonl(
+                    "export": export_annotations_jsonl(
                         input_path=args.input,
                         ledger_path=args.ledger,
                         output_path=args.output,
@@ -896,5 +1406,18 @@ def run(args, *, stop_event=None, expected_input_sha256: str | None = None) -> i
                     )
                 }
             )
+        )
+    elif args.output:
+        print(
+            json.dumps(
+                {
+                    "export_deferred": str(args.output),
+                    "reason": "Annotations are incomplete; collect remaining results before export",
+                    "annotated": progress["annotated"],
+                    "requests": progress["requests"],
+                    "failed": progress["errors"],
+                }
+            ),
+            flush=True,
         )
     return ROW_ERRORS_EXIT_CODE if progress["errors"] else 0

@@ -8,11 +8,21 @@ from __future__ import annotations
 from io import BytesIO, TextIOWrapper
 import json
 from pathlib import Path
-from typing import Any, Iterator
+import re
+from typing import Any, Iterator, Mapping
 
 from .contract import decode_json
 
 THINKING_LEVEL = "LOW"
+
+
+class GoogleBatchStatusError(ValueError):
+    """A local status check whose operational message is safe to display."""
+
+    def __init__(self, message: str):
+        self.safe_message = message
+        self.details = {"error": {"code": "invalid_batch_status"}}
+        super().__init__(message)
 
 
 def build_request(
@@ -131,6 +141,19 @@ class GoogleBatchClient:
             file=str(path), config={"mime_type": "jsonl", "display_name": path.name}
         ).name
 
+    def delete_file(self, file_id: str) -> None:
+        """Delete one exact file resource; a missing file is already cleaned up."""
+        if not isinstance(file_id, str) or not re.fullmatch(
+            r"files/[A-Za-z0-9_-]+", file_id
+        ):
+            raise ValueError("Google cleanup requires an exact files/<id> resource name")
+        try:
+            self.client.files.delete(name=file_id)
+        except Exception as exc:
+            status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+            if status != 404:
+                raise
+
     def submit(self, file_id: str, model: str, display_name: str) -> str:
         """Create one batch; the caller journals an uncertain response for recovery."""
         return self.client.batches.create(
@@ -140,22 +163,64 @@ class GoogleBatchClient:
     def status(self, job_id: str) -> dict[str, Any]:
         """Treat partial success as terminal so successful rows can be collected."""
         job = self.client.batches.get(name=job_id)
+
+        def field(value, name):
+            if isinstance(value, Mapping):
+                return value.get(name)
+            return getattr(value, name, None)
+
         # The SDK translates most MLDev BATCH_STATE values to JOB_STATE;
         # normalize both prefixes for terminal values it has not translated.
-        state = job.state.name.removeprefix("JOB_STATE_").removeprefix("BATCH_STATE_")
+        raw_state = field(job, "state")
+        state = raw_state if isinstance(raw_state, str) else field(raw_state, "name")
+        if not isinstance(state, str):
+            state = field(raw_state, "value")
+        state = (
+            state.strip()
+            .upper()
+            .removeprefix("JOB_STATE_")
+            .removeprefix("BATCH_STATE_")
+            if isinstance(state, str)
+            else ""
+        )
+        if state not in {
+            "QUEUED",
+            "PENDING",
+            "RUNNING",
+            "PAUSED",
+            "UPDATING",
+            "CANCELLING",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED",
+            "EXPIRED",
+            "PARTIALLY_SUCCEEDED",
+        }:
+            reported = repr(state[:120]) if state else "missing"
+            raise GoogleBatchStatusError(
+                f"Google batch {job_id} returned {reported} state; "
+                "check its provider status before resuming"
+            )
         failed = state in {
             "FAILED",
             "CANCELLED",
             "EXPIRED",
             "PARTIALLY_SUCCEEDED",
         }
-        output_file = job.dest.file_name if job.dest else None
+        output_file = field(field(job, "dest"), "file_name")
+        input_file = field(field(job, "src"), "file_name")
+        for value in (output_file, input_file):
+            if value is not None and (not isinstance(value, str) or not value):
+                raise GoogleBatchStatusError(
+                    f"Google batch {job_id} returned an invalid file reference; "
+                    "check its provider status before resuming"
+                )
         return {
-            "id": job.name,
+            "id": field(job, "name") or job_id,
             # MLDev currently does not populate src; do not infer it from a name.
-            "input_file_id": job.src.file_name if job.src else None,
-            "model": job.model,
-            "display_name": job.display_name,
+            "input_file_id": input_file,
+            "model": field(job, "model"),
+            "display_name": field(job, "display_name"),
             "status": ("completed" if state == "SUCCEEDED" else state.lower()),
             "done": state == "SUCCEEDED" or failed,
             "failed": failed,
@@ -168,8 +233,9 @@ class GoogleBatchClient:
         """Parse a bounded SDK byte download without a second decoded line list."""
         # The SDK returns bytes, not a stream. The harness therefore bounds shard
         # sizes; TextIOWrapper avoids also materializing a list of decoded lines.
-        data = self.client.files.download(file=file_id)
-        with TextIOWrapper(BytesIO(data), encoding="utf-8") as lines:
+        with TextIOWrapper(
+            BytesIO(self.client.files.download(file=file_id)), encoding="utf-8"
+        ) as lines:
             for line in lines:
                 if line.strip():
                     row = decode_json(line)

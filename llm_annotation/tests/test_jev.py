@@ -20,6 +20,9 @@ from neurips2026_locus.jev import (
     EnvironmentError,
     JevClient,
     JevError,
+    JevResponseError,
+    JevConnectionError,
+    JevUncertainSubmissionError,
     RetryDelayExceeded,
     retry_delay,
     get_api_key,
@@ -64,6 +67,62 @@ class JevTests(unittest.TestCase):
             client.decide({})
         self.assertEqual(handler.call_count, 1)
 
+    def test_unattended_rate_limits_exceed_attempt_limit_with_identical_request(self):
+        raw_body = b'{"model":"jev-fixed","answers":{},"usage":{"input_tokens":12}}'
+        handler = Mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "120"}),
+                httpx.Response(429, headers={"Retry-After": "120"}),
+                httpx.Response(429, headers={"Retry-After": "120"}),
+                httpx.Response(200, content=raw_body),
+            ]
+        )
+        payload = {"model": "jev-fixed", "state": {"excerpt": "A legal rule."}}
+        with (
+            self.client(handler, max_attempts=1, retry_rate_limits=True) as client,
+            patch("neurips2026_locus.jev.time.sleep") as sleep,
+        ):
+            result = client.decide(payload)
+        self.assertEqual(handler.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [120] * 3)
+        requests = [call.args[0].content for call in handler.call_args_list]
+        self.assertEqual(len(set(requests)), 1)
+        self.assertEqual(result.request_sha256, sha256(requests[0]).hexdigest())
+        self.assertEqual(result.response_sha256, sha256(raw_body).hexdigest())
+        self.assertEqual(result.body["usage"], {"input_tokens": 12})
+
+    def test_unattended_rate_limit_wait_is_cancellable_without_another_post(self):
+        stop = Event()
+        handler = Mock(
+            return_value=httpx.Response(429, headers={"Retry-After": "3600"})
+        )
+
+        def cancel_wait(delay):
+            stop.set()
+            return True
+
+        with (
+            self.client(
+                handler, max_attempts=1, retry_rate_limits=True, stop_event=stop
+            ) as client,
+            patch.object(stop, "wait", side_effect=cancel_wait) as wait,
+            self.assertRaises(CancelledError),
+        ):
+            client.decide({})
+        wait.assert_called_once_with(3600)
+        self.assertEqual(handler.call_count, 1)
+
+    def test_default_rate_limit_retries_remain_bounded(self):
+        handler = Mock(return_value=httpx.Response(429))
+        with (
+            self.client(handler, max_attempts=1) as client,
+            patch("neurips2026_locus.jev.time.sleep") as sleep,
+            self.assertRaises(JevError),
+        ):
+            client.decide({})
+        self.assertEqual(handler.call_count, 1)
+        sleep.assert_not_called()
+
     def test_context_rejection_is_distinct_from_auth_or_schema_errors(self):
         from neurips2026_locus.jev import JevHTTPError
 
@@ -82,6 +141,7 @@ class JevTests(unittest.TestCase):
                 False,
             ),
             (400, {"error": {"code": "invalid_json"}}, False),
+            (422, {"error": {"code": "max_tokens_exceeded"}}, True),
             (401, {"error": "private text"}, False),
             (413, {}, True),
             (422, {"error": "private text"}, False),
@@ -103,9 +163,9 @@ class JevTests(unittest.TestCase):
         )
 
     def test_non_json_constants_and_duplicate_keys_are_rejected(self):
-        for value in (b'{"answers":{},"answers":{}}', b'{"confidence":NaN}'):
+        for value in (b'{"answers":{},"answers":{}}', b'{"confidence":NaN}', b'[]'):
             with self.client(lambda _: httpx.Response(200, content=value)) as client:
-                with self.assertRaises(JevError):
+                with self.assertRaises(JevResponseError):
                     client.decide({})
 
     def test_http_roundtrip_preserves_response_usage_and_hashes(self):
@@ -151,16 +211,20 @@ class JevTests(unittest.TestCase):
         )
 
     def test_connection_retries_are_bounded(self):
-        handler = Mock(side_effect=httpx.ConnectTimeout("private-test-key"))
-        with (
-            self.client(handler, max_attempts=2) as client,
-            patch("neurips2026_locus.jev.time.sleep"),
-            self.assertRaises(JevError) as caught,
-        ):
-            client.decide({})
-        self.assertEqual(handler.call_count, 2)
-        self.assertNotIn("private-test-key", str(caught.exception))
-        self.assertTrue(caught.exception.__suppress_context__)
+        for retry_rate_limits in (False, True):
+            handler = Mock(side_effect=httpx.ConnectTimeout("private-test-key"))
+            with (
+                self.subTest(retry_rate_limits=retry_rate_limits),
+                self.client(
+                    handler, max_attempts=2, retry_rate_limits=retry_rate_limits
+                ) as client,
+                patch("neurips2026_locus.jev.time.sleep"),
+                self.assertRaises(JevConnectionError) as caught,
+            ):
+                client.decide({})
+            self.assertEqual(handler.call_count, 2)
+            self.assertNotIn("private-test-key", str(caught.exception))
+            self.assertTrue(caught.exception.__suppress_context__)
 
     def test_possible_submission_is_not_automatically_replayed(self):
         for error in (
@@ -169,17 +233,20 @@ class JevTests(unittest.TestCase):
             httpx.ReadError,
             httpx.RemoteProtocolError,
         ):
-            handler = Mock(side_effect=error("private-test-key"))
-            with (
-                self.subTest(error=error),
-                self.client(handler) as client,
-                patch("neurips2026_locus.jev.time.sleep") as sleep,
-            ):
-                with self.assertRaisesRegex(JevError, "possible submission") as caught:
-                    client.decide({})
-            self.assertEqual(handler.call_count, 1)
-            sleep.assert_not_called()
-            self.assertNotIn("private-test-key", str(caught.exception))
+            for retry_rate_limits in (False, True):
+                handler = Mock(side_effect=error("private-test-key"))
+                with (
+                    self.subTest(error=error, retry_rate_limits=retry_rate_limits),
+                    self.client(handler, retry_rate_limits=retry_rate_limits) as client,
+                    patch("neurips2026_locus.jev.time.sleep") as sleep,
+                ):
+                    with self.assertRaisesRegex(
+                        JevUncertainSubmissionError, "possible submission"
+                    ) as caught:
+                        client.decide({})
+                self.assertEqual(handler.call_count, 1)
+                sleep.assert_not_called()
+                self.assertNotIn("private-test-key", str(caught.exception))
 
     def test_rejects_malformed_keys_without_revealing_them(self):
         for key in (

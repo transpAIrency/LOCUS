@@ -28,6 +28,18 @@ class JevError(RuntimeError):
     """An API request failed or did not return a typed JSON response."""
 
 
+class JevResponseError(JevError):
+    """A completed HTTP response contains malformed or nonobject JSON."""
+
+
+class JevConnectionError(JevError):
+    """The API could not be reached before submitting a request body."""
+
+
+class JevUncertainSubmissionError(JevError):
+    """The response was lost after possible submission; never replay automatically."""
+
+
 class RetryDelayExceeded(JevError):
     """Stop a run when the server asks for a wait beyond the local retry budget."""
 
@@ -44,7 +56,7 @@ class JevHTTPError(JevError):
     def row_rejection(self) -> bool:
         """Only size/context errors are known to depend on the excerpt."""
         return self.status_code == 413 or (
-            self.status_code == 400 and self.error_code == "max_tokens_exceeded"
+            self.status_code in {400, 422} and self.error_code == "max_tokens_exceeded"
         )
 
 
@@ -72,8 +84,10 @@ def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def retry_delay(headers: Mapping[str, str], attempt: int) -> float:
-    """Honor short Retry-After delays; stop rather than retry early on longer ones."""
+def retry_delay(
+    headers: Mapping[str, str], attempt: int, *, allow_long_delay: bool = False
+) -> float:
+    """Honor Retry-After; bounded callers stop when the requested wait is too long."""
     retry_after = headers.get("Retry-After") or headers.get("retry-after")
     if retry_after:
         try:
@@ -86,13 +100,13 @@ def retry_delay(headers: Mapping[str, str], attempt: int) -> float:
                 delay = (deadline - datetime.now(timezone.utc)).total_seconds()
             except (TypeError, ValueError, OverflowError):
                 delay = math.nan
-        if delay > MAX_RETRY_DELAY_SECONDS:
+        if delay > MAX_RETRY_DELAY_SECONDS and not allow_long_delay:
             raise RetryDelayExceeded(
                 f"Server retry delay exceeds the {MAX_RETRY_DELAY_SECONDS:g}-second local limit; resume later."
             )
         if math.isfinite(delay):
             return max(0.0, delay)
-    return min(2.0 ** (attempt - 1), 30.0)
+    return min(2.0 ** min(attempt - 1, 5), 30.0)
 
 
 def load_dotenv(path: Path) -> None:
@@ -183,6 +197,7 @@ class JevClient:
         max_attempts: int = 5,
         transport: Any = None,
         stop_event=None,
+        retry_rate_limits: bool = False,
     ) -> None:
         """Validate local settings before creating a shared HTTPS connection pool."""
         if (
@@ -213,6 +228,7 @@ class JevClient:
         self.timeout_seconds = timeout_seconds
         self.max_attempts = max_attempts
         self.stop_event = stop_event
+        self.retry_rate_limits = retry_rate_limits
         try:
             import httpx
         except ImportError:
@@ -237,14 +253,18 @@ class JevClient:
 
         body = canonical_json_bytes(payload)
         retryable_codes = {429, 500, 502, 503, 504, 529}
-        for attempt in range(1, self.max_attempts + 1):
+        attempt, rate_limit_attempt = 1, 0
+        while attempt <= self.max_attempts:
             if self.stop_event is not None and self.stop_event.is_set():
                 raise CancelledError()
             try:
                 response = self._client.post(self.endpoint, content=body)
                 status = response.status_code
                 if status != 200:
-                    if status not in retryable_codes or attempt == self.max_attempts:
+                    rate_limited = status == 429 and self.retry_rate_limits
+                    if status not in retryable_codes or (
+                        attempt == self.max_attempts and not rate_limited
+                    ):
                         # Keep only a documented error code, never an error
                         # message that could echo legal text or credentials.
                         error_code = None
@@ -276,19 +296,40 @@ class JevClient:
                         raise JevHTTPError(status, error_code)
                     if self.stop_event is not None and self.stop_event.is_set():
                         raise CancelledError()
-                    delay = retry_delay(response.headers, attempt)
+                    if rate_limited:
+                        rate_limit_attempt += 1
+                    delay = retry_delay(
+                        response.headers,
+                        rate_limit_attempt if rate_limited else attempt,
+                        allow_long_delay=rate_limited,
+                    )
+                    if rate_limited:
+                        print(
+                            json.dumps(
+                                {
+                                    "provider": "typesafe",
+                                    "phase": "rate_limited",
+                                    "retry_in_seconds": delay,
+                                }
+                            ),
+                            flush=True,
+                        )
                     if self.stop_event is None:
                         time.sleep(delay)
                     else:
                         self.stop_event.wait(delay)
+                    if not rate_limited:
+                        attempt += 1
                     continue
                 raw_response = response.content
                 try:
                     decoded = decode_json(raw_response.decode("utf-8"))
                 except (UnicodeDecodeError, ValueError):
-                    raise JevError("Jev returned a non-JSON response") from None
+                    raise JevResponseError("Jev returned a non-JSON response") from None
                 if not isinstance(decoded, dict):
-                    raise JevError("Jev returned a JSON value other than an object")
+                    raise JevResponseError(
+                        "Jev returned a JSON value other than an object"
+                    )
                 return JevResponse(
                     body=decoded,
                     request_sha256=sha256(body).hexdigest(),
@@ -301,17 +342,18 @@ class JevClient:
             ):
                 # These failures happen before a request body is sent.
                 if attempt == self.max_attempts:
-                    raise JevError("Could not reach the Jev API") from None
+                    raise JevConnectionError("Could not reach the Jev API") from None
                 delay = min(2.0 ** (attempt - 1), 30.0)
                 if self.stop_event is None:
                     time.sleep(delay)
                 else:
                     self.stop_event.wait(delay)
+                attempt += 1
             except self._httpx.TransportError:
                 # A timeout or disconnect after sending a POST can have a paid
                 # response on the server. Preserve local work and require an
                 # explicit resume instead of automatically replaying it.
-                raise JevError(
+                raise JevUncertainSubmissionError(
                     "Jev response was interrupted after possible submission; inspect the run before resuming"
                 ) from None
         raise AssertionError("retry loop must return or raise")
