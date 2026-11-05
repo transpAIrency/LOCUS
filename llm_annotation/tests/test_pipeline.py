@@ -197,6 +197,122 @@ def convert_fixture_to_legacy_prompt_ledger(path):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_checkpoint_capacity_raises_the_soft_limit_only_when_needed(self):
+        for workers, soft, hard, expected in (
+            (96, 256, 4096, 1024),
+            (300, 256, 4096, 1264),
+            (96, 256, 512, 512),
+            (96, 512, 512, None),
+            (96, 2048, 4096, None),
+            (96, -1, -1, None),
+            (96, 256, -1, 1024),
+        ):
+            with self.subTest(workers=workers, soft=soft, hard=hard):
+                resource = Mock()
+                resource.RLIMIT_NOFILE = 7
+                resource.RLIM_INFINITY = -1
+                resource.getrlimit.return_value = (soft, hard)
+                with patch.dict(sys.modules, {"resource": resource}):
+                    pipeline.ensure_checkpoint_file_capacity(workers)
+                resource.getrlimit.assert_called_once_with(resource.RLIMIT_NOFILE)
+                if expected is None:
+                    resource.setrlimit.assert_not_called()
+                else:
+                    resource.setrlimit.assert_called_once_with(
+                        resource.RLIMIT_NOFILE, (expected, hard)
+                    )
+
+    def test_checkpoint_capacity_failures_are_actionable_before_paid_work(self):
+        for hard, failure in (
+            (400, None),
+            (4096, PermissionError("not permitted")),
+            (4096, ValueError("limit unavailable")),
+        ):
+            with self.subTest(hard=hard, failure=type(failure).__name__):
+                resource = Mock()
+                resource.RLIMIT_NOFILE = 7
+                resource.RLIM_INFINITY = -1
+                resource.getrlimit.return_value = (256, hard)
+                if failure is not None:
+                    resource.setrlimit.side_effect = failure
+                with (
+                    patch.dict(sys.modules, {"resource": resource}),
+                    self.assertRaises(pipeline.InputError) as raised,
+                ):
+                    pipeline.ensure_checkpoint_file_capacity(96)
+                message = str(raised.exception).lower()
+                self.assertIn("file", message)
+                self.assertIn("limit", message)
+                self.assertTrue("workers" in message or "ulimit" in message)
+                if failure is None:
+                    resource.setrlimit.assert_not_called()
+
+    def test_checkpoint_capacity_skips_unavailable_platform_resource_support(self):
+        with patch.dict(sys.modules, {"resource": None}):
+            pipeline.ensure_checkpoint_file_capacity(96)
+
+    def test_resource_preflight_preserves_existing_stage_cache_and_run_identity(self):
+        write_jsonl(self.input_path, [{"content": "A license is required."}])
+        self._annotate()
+        original_input = self.input_path.read_bytes()
+        original_checkpoint = self.ledger_path.read_bytes()
+        original_metadata = prompt_ledger_snapshot(self.ledger_path)
+        with closing(sqlite3.connect(self.ledger_path)) as db:
+            original_stages = db.execute(
+                "SELECT source_id,request_sha256,response_json,response_sha256 "
+                "FROM responses ORDER BY request_sha256"
+            ).fetchall()
+        self.assertEqual(len(original_stages), 2)
+        resource = Mock()
+        resource.RLIMIT_NOFILE = 7
+        resource.RLIM_INFINITY = -1
+        resource.getrlimit.return_value = (256, 400)
+        with (
+            patch.dict(sys.modules, {"resource": resource}),
+            patch.object(pipeline, "sha256_file") as input_hash,
+            patch.object(pipeline, "acquire_annotation_lock") as lock,
+            patch.object(pipeline, "JevClient") as client,
+            self.assertRaises(pipeline.InputError),
+        ):
+            pipeline.annotate(
+                **annotation_kwargs(self.input_path, self.ledger_path, resume=True),
+                workers=96,
+            )
+        client.assert_not_called()
+        input_hash.assert_not_called()
+        lock.assert_not_called()
+        self.assertEqual(self.input_path.read_bytes(), original_input)
+        self.assertEqual(self.ledger_path.read_bytes(), original_checkpoint)
+        self.assertEqual(prompt_ledger_snapshot(self.ledger_path), original_metadata)
+        with closing(sqlite3.connect(self.ledger_path)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT source_id,request_sha256,response_json,response_sha256 "
+                    "FROM responses ORDER BY request_sha256"
+                ).fetchall(),
+                original_stages,
+            )
+
+    def test_checkpoint_io_errors_report_local_recovery_guidance(self):
+        write_jsonl(self.input_path, [{"content": "A license is required."}])
+        with (
+            patch.object(pipeline, "JevClient", FakeJevClient),
+            patch.object(
+                pipeline,
+                "annotate_record",
+                side_effect=sqlite3.OperationalError("unable to open database file"),
+            ),
+            self.assertRaises(pipeline.InputError) as raised,
+        ):
+            pipeline.annotate(
+                **annotation_kwargs(self.input_path, self.ledger_path), workers=1
+            )
+        message = str(raised.exception)
+        self.assertIn("local checkpoint", message)
+        self.assertIn("open-file limits", message)
+        self.assertNotIn("provider configuration", message)
+        self.assertEqual(FakeJevClient.instances[-1].requests, [])
+
     def test_run_details_conversion_keeps_choices_probabilities_and_input_untouched(self):
         annotation = {
             "final": {

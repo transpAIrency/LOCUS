@@ -336,6 +336,7 @@ def preflight(args, stop_event=None):
     jev.load_dotenv(args.env_file)
     provider = args.provider
     if provider == "typesafe":
+        pipeline.ensure_checkpoint_file_capacity(args.workers)
         args.model = pipeline.model_id(
             args.model or os.environ.get("TYPESAFE_MODEL_ID") or jev.DEFAULT_MODEL
         )

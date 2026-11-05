@@ -596,9 +596,15 @@ class ClientTests(unittest.TestCase):
     def test_google_cleanup_validates_file_ids_and_tolerates_missing_files(self):
         client = object.__new__(google_batch.GoogleBatchClient)
         client.client = Mock()
-        client.delete_file("files/input-123_abc")
+        self.assertIs(client.delete_file("files/input-123_abc"), True)
         client.client.files.delete.assert_called_once_with(name="files/input-123_abc")
         client.client.files.delete.reset_mock()
+        boundary_id = "files/" + "a" * 40
+        self.assertIs(client.delete_file(boundary_id), True)
+        client.client.files.delete.assert_called_once_with(name=boundary_id)
+        client.client.files.delete.reset_mock()
+        self.assertIs(client.delete_file("files/" + "a" * 41), False)
+        client.client.files.delete.assert_not_called()
         for file_id in (
             "https://example.org/files/input-1",
             "files/input-1?key=secret",
@@ -608,6 +614,8 @@ class ClientTests(unittest.TestCase):
             "batches/input-1",
             "files/",
             "files/input-1\n",
+            "files/" + "a" * 41 + "?key=secret",
+            "files/" + "a" * 41 + "/other",
         ):
             with self.subTest(file_id=file_id), self.assertRaises(ValueError):
                 client.delete_file(file_id)
@@ -615,7 +623,8 @@ class ClientTests(unittest.TestCase):
         missing = RuntimeError("already removed")
         missing.code = 404
         client.client.files.delete.side_effect = missing
-        client.delete_file("files/input-1")
+        self.assertIs(client.delete_file("files/input-1"), True)
+        client.client.files.delete.assert_called_once_with(name="files/input-1")
         denied = RuntimeError("permission denied")
         denied.code = 403
         client.client.files.delete.side_effect = denied

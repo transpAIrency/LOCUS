@@ -1124,6 +1124,57 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(len(service.deleted_files), 2)
             self.assertEqual(service.submissions, 1)
 
+    def test_google_long_output_is_saved_as_skipped_without_blocking_export(self):
+        google_client_class = batch.google_batch.GoogleBatchClient
+        with tempfile.TemporaryDirectory() as temporary:
+            service, _ = self.fixture(Path(temporary), "google")
+            service.google_file_ids = True
+            self.assertEqual(self.run_action("submit", resume=False), 0)
+            output_id = "files/" + "b" * 41
+            service.jobs["job-1"]["status"]["output_files"] = [output_id]
+            results = service.jobs["job-1"]["results"]
+
+            def output_rows(file_id):
+                self.assertEqual(file_id, output_id)
+                yield from results
+
+            with patch.object(service, "iter_results", side_effect=output_rows):
+                self.assertEqual(self.run_action("collect"), 0)
+            saved = self.query(
+                "SELECT source_id,annotation_json FROM annotations ORDER BY source_id"
+            )
+            cleanup_client = object.__new__(google_client_class)
+            cleanup_client.client = Mock()
+            with patch.object(service, "delete_file", cleanup_client.delete_file):
+                self.assertEqual(
+                    self.run_action(
+                        "collect", "--cleanup-remote-files", "--output", str(self.output)
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    self.run_action("collect", "--cleanup-remote-files"), 0
+                )
+            cleanup_client.client.files.delete.assert_called_once_with(
+                name="files/input-1"
+            )
+            cleanup = json.loads(
+                self.query("SELECT value FROM metadata WHERE key='batch_cleanup:1'")[0][0]
+            )
+            self.assertEqual(cleanup["pending"], [])
+            self.assertEqual(cleanup["deleted"], ["files/input-1"])
+            self.assertEqual(cleanup["skipped"], [output_id])
+            self.assertEqual(
+                self.query(
+                    "SELECT source_id,annotation_json FROM annotations ORDER BY source_id"
+                ),
+                saved,
+            )
+            self.assertEqual(len(self.output.read_text().splitlines()), 2)
+            self.assertEqual(service.submissions, 1)
+            with closing(sqlite3.connect(self.ledger)) as db:
+                self.assertEqual(batch.summary(db)["pending_cleanup_files"], 0)
+
     def test_google_cleanup_never_runs_before_atomic_collection_commits(self):
         with tempfile.TemporaryDirectory() as temporary:
             service, _ = self.fixture(Path(temporary), "google")

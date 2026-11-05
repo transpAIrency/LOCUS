@@ -656,6 +656,43 @@ def distinct_paths(
         raise InputError("Input and output must not use a SQLite ledger sidecar path")
 
 
+def ensure_checkpoint_file_capacity(workers: int) -> None:
+    """Reserve descriptors for concurrent WAL checkpoints and HTTP connections."""
+    try:
+        import resource
+    except ImportError:
+        return
+    required = 64 + 4 * workers
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft == resource.RLIM_INFINITY or soft >= required:
+        return
+    target = max(1024, required)
+    if hard != resource.RLIM_INFINITY:
+        target = min(target, hard)
+    guidance = (
+        f"Open-file limit {soft} is too low for {workers} Jev workers; "
+        f"at least {required} is required. Raise the limit in the launching "
+        f"terminal with 'ulimit -n {max(1024, required)}' or reduce --workers."
+    )
+    if target < required:
+        raise InputError(guidance)
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (OSError, ValueError):
+        raise InputError(guidance) from None
+    print(
+        json.dumps(
+            {
+                "provider": "typesafe",
+                "phase": "local_resource_limit",
+                "open_file_limit": target,
+                "workers": workers,
+            }
+        ),
+        flush=True,
+    )
+
+
 def acquire_annotation_lock(ledger_path: Path) -> sqlite3.Connection:
     """Allow one annotating process per ledger, with automatic release after a crash.
 
@@ -958,6 +995,7 @@ def annotate(
         raise InputError("max_text_chars must be positive")
     if workers < 1:
         raise InputError("workers must be at least one")
+    ensure_checkpoint_file_capacity(workers)
     distinct_paths(input_path, ledger_path)
     input_stamp = file_stamp(input_path)
     input_hash = sha256_file(input_path)
@@ -1072,6 +1110,8 @@ def annotate(
                         + (
                             "Recorded failures require --retry-failed. "
                             if recorded
+                            else "Inspect local checkpoint storage, permissions, and open-file limits before resuming. "
+                            if isinstance(exc, (sqlite3.Error, OSError))
                             else "Inspect provider configuration before resuming. "
                         )
                         + "Successful stages are retained."

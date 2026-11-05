@@ -141,18 +141,23 @@ class GoogleBatchClient:
             file=str(path), config={"mime_type": "jsonl", "display_name": path.name}
         ).name
 
-    def delete_file(self, file_id: str) -> None:
-        """Delete one exact file resource; a missing file is already cleaned up."""
+    def delete_file(self, file_id: str) -> bool:
+        """Delete one exact file, returning False for an undeletable batch output."""
         if not isinstance(file_id, str) or not re.fullmatch(
             r"files/[A-Za-z0-9_-]+", file_id
         ):
             raise ValueError("Google cleanup requires an exact files/<id> resource name")
+        if len(file_id.removeprefix("files/")) > 40:
+            # Generated batch IDs can exceed the Files API deletion limit.
+            # Leave those files with the service so local export can proceed.
+            return False
         try:
             self.client.files.delete(name=file_id)
         except Exception as exc:
             status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
             if status != 404:
                 raise
+        return True
 
     def submit(self, file_id: str, model: str, display_name: str) -> str:
         """Create one batch; the caller journals an uncertain response for recovery."""

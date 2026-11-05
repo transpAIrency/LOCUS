@@ -1061,9 +1061,10 @@ def cleanup_remote_files(ledger, config, client, *, stop_event=None) -> None:
         while schedule["pending"]:
             check_cancelled(stop_event)
             file_id = schedule["pending"][0]
-            client.delete_file(file_id)
+            deleted = client.delete_file(file_id)
             schedule["pending"].pop(0)
-            schedule["deleted"].append(file_id)
+            outcome = "skipped" if deleted is False else "deleted"
+            schedule.setdefault(outcome, []).append(file_id)
             with db:
                 db.execute(
                     "UPDATE metadata SET value=? WHERE key=?",
