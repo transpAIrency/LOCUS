@@ -22,6 +22,7 @@ from .contract import decode_json
 DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MODEL = "jev-1.14.0"
 MAX_RETRY_DELAY_SECONDS = 60.0
+TRANSIENT_HTTP_STATUSES = frozenset({408, 500, 502, 503, 504, 529})
 
 
 class JevError(RuntimeError):
@@ -35,9 +36,31 @@ class JevResponseError(JevError):
 class JevConnectionError(JevError):
     """The API could not be reached before submitting a request body."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        transport_error: str | None = None,
+        attempts: int | None = None,
+    ) -> None:
+        self.transport_error = transport_error
+        self.attempts = attempts
+        super().__init__(message)
+
 
 class JevUncertainSubmissionError(JevError):
-    """The response was lost after possible submission; never replay automatically."""
+    """A response was lost after possible submission or bounded recovery."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        transport_error: str | None = None,
+        attempts: int | None = None,
+    ) -> None:
+        self.transport_error = transport_error
+        self.attempts = attempts
+        super().__init__(message)
 
 
 class RetryDelayExceeded(JevError):
@@ -47,10 +70,21 @@ class RetryDelayExceeded(JevError):
 class JevHTTPError(JevError):
     """Retain the HTTP status without storing a potentially sensitive body."""
 
-    def __init__(self, status_code: int, error_code: str | None = None) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        error_code: str | None = None,
+        *,
+        attempts: int | None = None,
+    ) -> None:
         self.status_code = status_code
         self.error_code = error_code
+        self.attempts = attempts
         super().__init__(f"Jev request failed with HTTP status {status_code}")
+
+    @property
+    def transient(self) -> bool:
+        return self.status_code in TRANSIENT_HTTP_STATUSES
 
     @property
     def row_rejection(self) -> bool:
@@ -198,6 +232,7 @@ class JevClient:
         transport: Any = None,
         stop_event=None,
         retry_rate_limits: bool = False,
+        retry_transport_errors: bool = False,
     ) -> None:
         """Validate local settings before creating a shared HTTPS connection pool."""
         if (
@@ -229,6 +264,7 @@ class JevClient:
         self.max_attempts = max_attempts
         self.stop_event = stop_event
         self.retry_rate_limits = retry_rate_limits
+        self.retry_transport_errors = retry_transport_errors
         try:
             import httpx
         except ImportError:
@@ -252,7 +288,7 @@ class JevClient:
         """Submit one typed decision request and return decoded, hashed JSON."""
 
         body = canonical_json_bytes(payload)
-        retryable_codes = {429, 500, 502, 503, 504, 529}
+        retryable_codes = TRANSIENT_HTTP_STATUSES | {429}
         attempt, rate_limit_attempt = 1, 0
         while attempt <= self.max_attempts:
             if self.stop_event is not None and self.stop_event.is_set():
@@ -293,7 +329,7 @@ class JevClient:
                                     error_code = "max_tokens_exceeded"
                         except (ValueError, UnicodeError):
                             pass
-                        raise JevHTTPError(status, error_code)
+                        raise JevHTTPError(status, error_code, attempts=attempt)
                     if self.stop_event is not None and self.stop_event.is_set():
                         raise CancelledError()
                     if rate_limited:
@@ -301,7 +337,7 @@ class JevClient:
                     delay = retry_delay(
                         response.headers,
                         rate_limit_attempt if rate_limited else attempt,
-                        allow_long_delay=rate_limited,
+                        allow_long_delay=rate_limited or self.retry_transport_errors,
                     )
                     if rate_limited:
                         print(
@@ -339,22 +375,89 @@ class JevClient:
                 self._httpx.ConnectError,
                 self._httpx.ConnectTimeout,
                 self._httpx.PoolTimeout,
-            ):
+            ) as exc:
                 # These failures happen before a request body is sent.
+                if self.stop_event is not None and self.stop_event.is_set():
+                    raise CancelledError() from None
+                error_type = type(exc).__name__
                 if attempt == self.max_attempts:
-                    raise JevConnectionError("Could not reach the Jev API") from None
+                    raise JevConnectionError(
+                        f"Could not reach the Jev API ({error_type}) after {attempt} request attempt(s)",
+                        transport_error=error_type,
+                        attempts=attempt,
+                    ) from None
                 delay = min(2.0 ** (attempt - 1), 30.0)
+                print(
+                    json.dumps(
+                        {
+                            "provider": "typesafe",
+                            "phase": "retrying_connection",
+                            "transport_error": error_type,
+                            "attempt": attempt,
+                            "max_attempts": self.max_attempts,
+                            "retry_in_seconds": delay,
+                            "request_sha256": sha256(body).hexdigest(),
+                        }
+                    ),
+                    flush=True,
+                )
                 if self.stop_event is None:
                     time.sleep(delay)
                 else:
                     self.stop_event.wait(delay)
                 attempt += 1
-            except self._httpx.TransportError:
-                # A timeout or disconnect after sending a POST can have a paid
-                # response on the server. Preserve local work and require an
-                # explicit resume instead of automatically replaying it.
-                raise JevUncertainSubmissionError(
-                    "Jev response was interrupted after possible submission; inspect the run before resuming"
+            except self._httpx.TransportError as exc:
+                if self.stop_event is not None and self.stop_event.is_set():
+                    raise CancelledError() from None
+                error_type = type(exc).__name__
+                transient = isinstance(
+                    exc,
+                    (
+                        self._httpx.ReadTimeout,
+                        self._httpx.WriteTimeout,
+                        self._httpx.ReadError,
+                        self._httpx.WriteError,
+                        self._httpx.CloseError,
+                        self._httpx.RemoteProtocolError,
+                    ),
+                )
+                # Production explicitly accepts bounded replay of individual
+                # calls. A lost response may already have consumed provider tokens.
+                if (
+                    transient
+                    and self.retry_transport_errors
+                    and attempt < self.max_attempts
+                ):
+                    delay = retry_delay({}, attempt)
+                    print(
+                        json.dumps(
+                            {
+                                "provider": "typesafe",
+                                "phase": "retrying_request",
+                                "transport_error": error_type,
+                                "attempt": attempt,
+                                "max_attempts": self.max_attempts,
+                                "retry_in_seconds": delay,
+                                "request_sha256": sha256(body).hexdigest(),
+                            }
+                        ),
+                        flush=True,
+                    )
+                    if self.stop_event is None:
+                        time.sleep(delay)
+                    else:
+                        self.stop_event.wait(delay)
+                    attempt += 1
+                    continue
+                if transient:
+                    raise JevUncertainSubmissionError(
+                        "Jev response was interrupted after possible submission "
+                        f"({error_type}); {attempt} request attempt(s) ended without a usable response",
+                        transport_error=error_type,
+                        attempts=attempt,
+                    ) from None
+                raise JevError(
+                    f"Jev transport failed ({error_type}); inspect local HTTP configuration before resuming"
                 ) from None
         raise AssertionError("retry loop must return or raise")
 

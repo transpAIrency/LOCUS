@@ -46,9 +46,11 @@ class FakeJevClient:
         max_attempts: int,
         stop_event=None,
         retry_rate_limits=False,
+        retry_transport_errors=False,
     ) -> None:
         self.endpoint = endpoint
         self.retry_rate_limits = retry_rate_limits
+        self.retry_transport_errors = retry_transport_errors
         self.requests: list[dict[str, object]] = []
         type(self).instances.append(self)
 
@@ -806,12 +808,27 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self._annotate(resume=True)["annotated"], 1)
 
     def test_isolated_response_errors_continue_and_retry_only_the_failed_stage(self):
-        from neurips2026_locus.jev import JevResponseError
+        from neurips2026_locus.jev import (
+            JevConnectionError,
+            JevHTTPError,
+            JevResponseError,
+            JevUncertainSubmissionError,
+        )
 
         records = [{"content": f"rule {i}"} for i in range(3)]
         write_jsonl(self.input_path, records)
         decide = FakeJevClient.decide
-        for mode in ("malformed", "classification_schema", "confidence_schema"):
+        for mode in (
+            "malformed",
+            "classification_schema",
+            "confidence_schema",
+            "classification_transport",
+            "confidence_transport",
+            "classification_connection",
+            "confidence_connection",
+            "classification_http",
+            "confidence_http",
+        ):
             with self.subTest(mode=mode):
                 ledger = self.directory / f"{mode}.sqlite3"
                 kwargs = annotation_kwargs(self.input_path, ledger)
@@ -822,8 +839,28 @@ class PipelineTests(unittest.TestCase):
                     if bad_row and mode == "malformed" and not confidence:
                         client.requests.append(payload)
                         raise JevResponseError("Invalid JSON in received response")
+                    failed_stage = confidence == mode.startswith("confidence_")
+                    if (
+                        bad_row
+                        and mode.endswith(("_transport", "_connection", "_http"))
+                        and failed_stage
+                    ):
+                        client.requests.append(payload)
+                        if mode.endswith("_http"):
+                            raise JevHTTPError(503, attempts=5)
+                        if mode.endswith("_connection"):
+                            raise JevConnectionError(
+                                "Bounded connection recovery exhausted",
+                                transport_error="ConnectTimeout",
+                                attempts=5,
+                            )
+                        raise JevUncertainSubmissionError(
+                            "Bounded transport recovery exhausted",
+                            transport_error="ReadTimeout",
+                            attempts=5,
+                        )
                     response = decide(client, payload)
-                    if bad_row and confidence == (mode == "confidence_schema"):
+                    if bad_row and mode.endswith("_schema") and failed_stage:
                         question = (
                             "confidence_label" if confidence else "primary_function"
                         )
@@ -840,6 +877,7 @@ class PipelineTests(unittest.TestCase):
                 with (
                     patch.object(pipeline, "JevClient", FakeJevClient),
                     patch.object(FakeJevClient, "decide", fail_one),
+                    patch("sys.stdout", new=io.StringIO()) as output,
                 ):
                     first = pipeline.annotate(**kwargs, workers=1)
                 self.assertEqual((first["annotated"], first["failed"]), (2, 1))
@@ -848,6 +886,31 @@ class PipelineTests(unittest.TestCase):
                         "SELECT source_id,annotation_json FROM annotations "
                         "WHERE status='annotated' ORDER BY source_id"
                     ).fetchall()
+                    failure = json.loads(
+                        db.execute(
+                            "SELECT annotation_json FROM annotations "
+                            "WHERE status='failed'"
+                        ).fetchone()[0]
+                    )
+                if mode.endswith(("_transport", "_connection", "_http")):
+                    self.assertEqual(failure["error"]["attempts"], 5)
+                    failed_log = next(
+                        row
+                        for row in map(json.loads, output.getvalue().splitlines())
+                        if row.get("status") == "failed"
+                    )
+                    self.assertEqual(failed_log["attempts"], 5)
+                    if mode.endswith("_http"):
+                        self.assertEqual(failure["error"]["http_status"], 503)
+                        self.assertEqual(failed_log["http_status"], 503)
+                    else:
+                        expected = (
+                            "ConnectTimeout"
+                            if mode.endswith("_connection")
+                            else "ReadTimeout"
+                        )
+                        self.assertEqual(failure["error"]["transport_error"], expected)
+                        self.assertEqual(failed_log["transport_error"], expected)
                 with patch.object(pipeline, "JevClient", FakeJevClient):
                     resumed = pipeline.annotate(**dict(kwargs, resume=True), workers=1)
                     self.assertEqual(resumed["failed"], 1)
@@ -857,7 +920,9 @@ class PipelineTests(unittest.TestCase):
                     )
                 self.assertEqual((retried["annotated"], retried["failed"]), (1, 0))
                 requests = FakeJevClient.instances[-1].requests
-                self.assertEqual(len(requests), 1 if mode == "confidence_schema" else 2)
+                self.assertEqual(
+                    len(requests), 1 if mode.startswith("confidence_") else 2
+                )
                 self.assertTrue(
                     all(request["state"]["excerpt"] == "rule 1" for request in requests)
                 )
@@ -963,6 +1028,35 @@ class PipelineTests(unittest.TestCase):
                 )
         self.assertGreaterEqual(send.call_count, pipeline.MAX_CONSECUTIVE_REJECTIONS)
         self.assertLess(send.call_count, 40)
+
+    def test_systemic_transport_exhaustion_stops_at_the_consecutive_failure_guard(self):
+        from neurips2026_locus.jev import JevUncertainSubmissionError
+
+        write_jsonl(self.input_path, [{"content": f"rule {i}"} for i in range(40)])
+        failure = JevUncertainSubmissionError(
+            "Bounded transport recovery exhausted",
+            transport_error="ReadError",
+            attempts=5,
+        )
+        with (
+            patch.object(pipeline, "JevClient", FakeJevClient),
+            patch.object(FakeJevClient, "decide", side_effect=failure) as send,
+            self.assertRaises(pipeline.InputError),
+        ):
+            pipeline.annotate(
+                **annotation_kwargs(self.input_path, self.ledger_path), workers=1
+            )
+        self.assertGreaterEqual(send.call_count, pipeline.MAX_CONSECUTIVE_REJECTIONS)
+        self.assertLess(send.call_count, 40)
+        with closing(sqlite3.connect(self.ledger_path)) as db:
+            failures = db.execute(
+                "SELECT annotation_json FROM annotations WHERE status='failed'"
+            ).fetchall()
+        self.assertGreaterEqual(len(failures), pipeline.MAX_CONSECUTIVE_REJECTIONS)
+        for encoded, in failures:
+            error = json.loads(encoded)["error"]
+            self.assertEqual(error["transport_error"], "ReadError")
+            self.assertEqual(error["attempts"], 5)
 
     def setUp(self) -> None:
         output = patch("sys.stdout", new=io.StringIO())
@@ -1145,6 +1239,7 @@ class PipelineTests(unittest.TestCase):
 
         counts = self._annotate()
         self.assertTrue(FakeJevClient.instances[0].retry_rate_limits)
+        self.assertTrue(FakeJevClient.instances[0].retry_transport_errors)
         output_path = self.directory / "annotations.jsonl"
         export_counts = pipeline.export_annotations_jsonl(
             input_path=self.input_path,

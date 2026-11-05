@@ -45,10 +45,12 @@ from .jev import (
     DEFAULT_MODEL,
     EnvironmentError,
     JevClient,
+    JevConnectionError,
     JevError,
     JevHTTPError,
     JevResponse,
     JevResponseError,
+    JevUncertainSubmissionError,
     RetryDelayExceeded,
     get_api_key,
     load_dotenv,
@@ -748,7 +750,7 @@ class AnnotationLedger:
         if resume and not existed:
             raise InputError(f"Cannot resume because the ledger does not exist: {path}")
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(path)
+        self.connection = sqlite3.connect(path, timeout=60)
         try:
             if existed:
                 existing = ledger_metadata(self.connection)
@@ -1029,6 +1031,7 @@ def annotate(
             max_attempts=max_attempts,
             stop_event=stop_event,
             retry_rate_limits=True,
+            retry_transport_errors=True,
         )
     except BaseException:
         ledger.close()
@@ -1065,9 +1068,25 @@ def annotate(
                 continue
             except Exception as exc:
                 row_rejection = isinstance(exc, JevHTTPError) and exc.row_rejection
+                temporary_http = isinstance(exc, JevHTTPError) and exc.transient
                 recorded = (
-                    isinstance(exc, (ContractError, JevResponseError)) or row_rejection
+                    isinstance(
+                        exc,
+                        (
+                            ContractError,
+                            JevResponseError,
+                            JevUncertainSubmissionError,
+                            JevConnectionError,
+                        ),
+                    )
+                    or row_rejection
+                    or temporary_http
                 )
+                transport_details = {
+                    field: getattr(exc, field)
+                    for field in ("transport_error", "attempts")
+                    if getattr(exc, field, None) is not None
+                }
                 if recorded:
                     ledger.insert(
                         source_id=source_id,
@@ -1083,6 +1102,7 @@ def annotate(
                                 "message": str(exc),
                                 "http_status": getattr(exc, "status_code", None),
                                 "code": getattr(exc, "error_code", None),
+                                **transport_details,
                             },
                         },
                         replace_failed=retry_failed,
@@ -1096,6 +1116,7 @@ def annotate(
                                 "status": "failed",
                                 "error_type": type(exc).__name__,
                                 "http_status": getattr(exc, "status_code", None),
+                                **transport_details,
                             }
                         ),
                         flush=True,
@@ -1105,15 +1126,37 @@ def annotate(
                     not recorded
                     or consecutive_rejections >= MAX_CONSECUTIVE_REJECTIONS
                 ):
+                    if isinstance(exc, JevUncertainSubmissionError):
+                        guidance = (
+                            "Repeated transport interruptions exhausted bounded retries; "
+                            "inspect network/provider availability before resuming. "
+                            "Affected failed rows require --retry-failed. "
+                        )
+                    elif isinstance(exc, JevConnectionError):
+                        guidance = (
+                            "Repeated pre-submission connection failures exhausted "
+                            "bounded retries; inspect "
+                            "network/provider availability before resuming. "
+                            "Affected failed rows require --retry-failed. "
+                        )
+                    elif temporary_http:
+                        guidance = (
+                            "Repeated temporary HTTP failures exhausted bounded retries; "
+                            "inspect network/provider availability before resuming. "
+                            "Affected failed rows require --retry-failed. "
+                        )
+                    elif recorded:
+                        guidance = "Recorded failures require --retry-failed. "
+                    elif isinstance(exc, (sqlite3.Error, OSError)):
+                        guidance = (
+                            "Inspect local checkpoint storage, permissions, and "
+                            "open-file limits before resuming. "
+                        )
+                    else:
+                        guidance = "Inspect provider configuration before resuming. "
                     first_failure = InputError(
                         f"Jev stopped at source row {source_index}: {exc}. "
-                        + (
-                            "Recorded failures require --retry-failed. "
-                            if recorded
-                            else "Inspect local checkpoint storage, permissions, and open-file limits before resuming. "
-                            if isinstance(exc, (sqlite3.Error, OSError))
-                            else "Inspect provider configuration before resuming. "
-                        )
+                        + guidance
                         + "Successful stages are retained."
                     )
                 continue

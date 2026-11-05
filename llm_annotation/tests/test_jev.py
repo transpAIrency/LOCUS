@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from hashlib import sha256
 import httpx
+import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -20,6 +22,7 @@ from neurips2026_locus.jev import (
     EnvironmentError,
     JevClient,
     JevError,
+    JevHTTPError,
     JevResponseError,
     JevConnectionError,
     JevUncertainSubmissionError,
@@ -32,23 +35,24 @@ from neurips2026_locus.jev import (
 
 class JevTests(unittest.TestCase):
     def test_long_retry_header_stops_instead_of_sleeping_or_retrying_early(self):
-        for delay in (
-            "120",
-            "9" * 400,
-            format_datetime(datetime.now(timezone.utc) + timedelta(hours=1)),
-        ):
-            handler = Mock(
-                return_value=httpx.Response(429, headers={"Retry-After": delay})
-            )
-            with (
-                self.subTest(delay=delay),
-                self.client(handler) as client,
-                patch("neurips2026_locus.jev.time.sleep") as sleep,
+        for status in (429, 503):
+            for delay in (
+                "120",
+                "9" * 400,
+                format_datetime(datetime.now(timezone.utc) + timedelta(hours=1)),
             ):
-                with self.assertRaisesRegex(RetryDelayExceeded, "60-second"):
-                    client.decide({})
-            self.assertEqual(handler.call_count, 1)
-            sleep.assert_not_called()
+                handler = Mock(
+                    return_value=httpx.Response(status, headers={"Retry-After": delay})
+                )
+                with (
+                    self.subTest(status=status, delay=delay),
+                    self.client(handler) as client,
+                    patch("neurips2026_locus.jev.time.sleep") as sleep,
+                ):
+                    with self.assertRaisesRegex(RetryDelayExceeded, "60-second"):
+                        client.decide({})
+                self.assertEqual(handler.call_count, 1)
+                sleep.assert_not_called()
         self.assertEqual(retry_delay({"Retry-After": "60"}, 1), 60)
         self.assertEqual(retry_delay({"retry-after": "60"}, 1), 60)
 
@@ -143,16 +147,22 @@ class JevTests(unittest.TestCase):
             (400, {"error": {"code": "invalid_json"}}, False),
             (422, {"error": {"code": "max_tokens_exceeded"}}, True),
             (401, {"error": "private text"}, False),
+            (402, {"error": "private text"}, False),
+            (403, {"error": "private text"}, False),
             (413, {}, True),
             (422, {"error": "private text"}, False),
         ]:
             with (
                 self.subTest(status=status),
-                self.client(lambda _: httpx.Response(status, json=body)) as client,
+                self.client(
+                    lambda _: httpx.Response(status, json=body),
+                    retry_transport_errors=True,
+                ) as client,
             ):
                 with self.assertRaises(JevHTTPError) as caught:
                     client.decide({})
                 self.assertEqual(caught.exception.row_rejection, row_specific)
+                self.assertFalse(caught.exception.transient)
                 self.assertNotIn("private text", str(caught.exception))
 
     def client(self, handler, **kwargs):
@@ -223,6 +233,8 @@ class JevTests(unittest.TestCase):
             ):
                 client.decide({})
             self.assertEqual(handler.call_count, 2)
+            self.assertEqual(caught.exception.transport_error, "ConnectTimeout")
+            self.assertEqual(caught.exception.attempts, 2)
             self.assertNotIn("private-test-key", str(caught.exception))
             self.assertTrue(caught.exception.__suppress_context__)
 
@@ -231,6 +243,8 @@ class JevTests(unittest.TestCase):
             httpx.ReadTimeout,
             httpx.WriteTimeout,
             httpx.ReadError,
+            httpx.WriteError,
+            httpx.CloseError,
             httpx.RemoteProtocolError,
         ):
             for retry_rate_limits in (False, True):
@@ -247,6 +261,202 @@ class JevTests(unittest.TestCase):
                 self.assertEqual(handler.call_count, 1)
                 sleep.assert_not_called()
                 self.assertNotIn("private-test-key", str(caught.exception))
+
+    def test_opted_in_transport_retry_preserves_exact_body_and_response_digests(self):
+        body = b'{"model":"jev-fixed","answers":{},"usage":{"input_tokens":12}}'
+        payload = {"model": "jev-fixed", "state": {"excerpt": "SOURCE_TEXT_NOT_LOGGED"}}
+        for error in (
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            httpx.ReadError,
+            httpx.WriteError,
+            httpx.CloseError,
+            httpx.RemoteProtocolError,
+        ):
+            handler = Mock(
+                side_effect=[
+                    error("private-test-key"), httpx.Response(200, content=body)
+                ]
+            )
+            with (
+                self.subTest(error=error.__name__),
+                self.client(
+                    handler, max_attempts=2, retry_transport_errors=True
+                ) as client,
+                patch("neurips2026_locus.jev.time.sleep") as sleep,
+                patch("sys.stdout", new=io.StringIO()) as output,
+            ):
+                result = client.decide(payload)
+            self.assertEqual(handler.call_count, 2)
+            sleep.assert_called_once_with(1.0)
+            requests = [call.args[0].content for call in handler.call_args_list]
+            self.assertEqual(requests[0], requests[1])
+            self.assertEqual(result.request_sha256, sha256(requests[0]).hexdigest())
+            self.assertEqual(result.response_sha256, sha256(body).hexdigest())
+            event = json.loads(output.getvalue())
+            self.assertEqual(event["transport_error"], error.__name__)
+            self.assertEqual(event["attempt"], 1)
+            self.assertEqual(event["max_attempts"], 2)
+            self.assertNotIn("private-test-key", output.getvalue())
+            self.assertNotIn("SOURCE_TEXT_NOT_LOGGED", output.getvalue())
+
+    def test_opted_in_transport_exhaustion_has_bounded_safe_typed_diagnostics(self):
+        handler = Mock(side_effect=httpx.ReadTimeout("private-test-key"))
+        payload = {"state": "SOURCE_TEXT_NOT_LOGGED"}
+        with (
+            self.client(handler, max_attempts=3, retry_transport_errors=True) as client,
+            patch("neurips2026_locus.jev.time.sleep") as sleep,
+            patch("sys.stdout", new=io.StringIO()) as output,
+            self.assertRaises(JevUncertainSubmissionError) as caught,
+        ):
+            client.decide(payload)
+        self.assertEqual(handler.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 2.0])
+        self.assertEqual(caught.exception.transport_error, "ReadTimeout")
+        self.assertEqual(caught.exception.attempts, 3)
+        self.assertTrue(caught.exception.__suppress_context__)
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual([event["attempt"] for event in events], [1, 2])
+        diagnostics = output.getvalue() + "".join(
+            traceback.format_exception(
+                type(caught.exception), caught.exception, caught.exception.__traceback__
+            )
+        )
+        self.assertNotIn("private-test-key", diagnostics)
+        self.assertNotIn("SOURCE_TEXT_NOT_LOGGED", diagnostics)
+
+    def test_opted_in_transport_retry_can_be_cancelled_during_backoff(self):
+        stop = Event()
+        handler = Mock(side_effect=httpx.ReadTimeout("private-test-key"))
+
+        def cancel_wait(delay):
+            stop.set()
+            return True
+
+        with (
+            self.client(
+                handler, max_attempts=5, retry_transport_errors=True, stop_event=stop
+            ) as client,
+            patch.object(stop, "wait", side_effect=cancel_wait) as wait,
+            patch("neurips2026_locus.jev.time.sleep") as sleep,
+            patch("sys.stdout", new=io.StringIO()),
+            self.assertRaises(CancelledError),
+        ):
+            client.decide({})
+        wait.assert_called_once_with(1.0)
+        sleep.assert_not_called()
+        self.assertEqual(handler.call_count, 1)
+
+    def test_opted_in_recovery_does_not_retry_unknown_local_protocol_errors(self):
+        for error in (httpx.LocalProtocolError, httpx.UnsupportedProtocol):
+            handler = Mock(side_effect=error("private-test-key"))
+            with (
+                self.subTest(error=error.__name__),
+                self.client(
+                    handler, max_attempts=5, retry_transport_errors=True
+                ) as client,
+                patch("neurips2026_locus.jev.time.sleep") as sleep,
+                self.assertRaises(JevError) as caught,
+            ):
+                client.decide({})
+            self.assertEqual(type(caught.exception), JevError)
+            self.assertEqual(handler.call_count, 1)
+            sleep.assert_not_called()
+            self.assertNotIn("private-test-key", str(caught.exception))
+
+    def test_transient_http_recovery_keeps_exact_body_and_response_hashes(self):
+        body = b'{"model":"jev-fixed","answers":{}}'
+        for status in (408, 500, 502, 503, 504, 529):
+            handler = Mock(
+                side_effect=[
+                    httpx.Response(status, headers={"Retry-After": "2"}),
+                    httpx.Response(200, content=body),
+                ]
+            )
+            with (
+                self.subTest(status=status),
+                self.client(
+                    handler, max_attempts=2, retry_transport_errors=True
+                ) as client,
+                patch("neurips2026_locus.jev.time.sleep") as sleep,
+            ):
+                result = client.decide({"state": {"excerpt": "A legal rule."}})
+            self.assertEqual(handler.call_count, 2)
+            sleep.assert_called_once_with(2.0)
+            requests = [call.args[0].content for call in handler.call_args_list]
+            self.assertEqual(requests[0], requests[1])
+            self.assertEqual(result.request_sha256, sha256(requests[0]).hexdigest())
+            self.assertEqual(result.response_sha256, sha256(body).hexdigest())
+
+    def test_exhausted_transient_http_errors_keep_status_and_attempt_count(self):
+        for status in (408, 500, 502, 503, 504, 529):
+            handler = Mock(
+                return_value=httpx.Response(
+                    status, json={"message": "private-test-key"}
+                )
+            )
+            with (
+                self.subTest(status=status),
+                self.client(
+                    handler, max_attempts=2, retry_transport_errors=True
+                ) as client,
+                patch("neurips2026_locus.jev.time.sleep") as sleep,
+                patch("sys.stdout", new=io.StringIO()) as output,
+                self.assertRaises(JevHTTPError) as caught,
+            ):
+                client.decide({})
+            self.assertEqual(handler.call_count, 2)
+            sleep.assert_called_once_with(1.0)
+            self.assertTrue(caught.exception.transient)
+            self.assertEqual(caught.exception.status_code, status)
+            self.assertEqual(caught.exception.attempts, 2)
+            self.assertNotIn("private-test-key", str(caught.exception))
+            self.assertNotIn("private-test-key", output.getvalue())
+
+    def test_production_long_http_retry_after_is_honored_and_cancellable(self):
+        for cancel in (False, True):
+            events = []
+            stop = Event() if cancel else None
+
+            def respond(request):
+                events.append("post")
+                if events.count("post") == 1:
+                    return httpx.Response(503, headers={"Retry-After": "120"})
+                return httpx.Response(200, json={})
+
+            def wait(delay):
+                events.append(("wait", delay))
+                if stop is not None:
+                    stop.set()
+                return stop is not None
+
+            handler = Mock(side_effect=respond)
+            with (
+                self.subTest(cancel=cancel),
+                self.client(
+                    handler,
+                    max_attempts=2,
+                    retry_transport_errors=True,
+                    stop_event=stop,
+                ) as client,
+                patch("neurips2026_locus.jev.time.sleep", side_effect=wait) as sleep,
+                patch("sys.stdout", new=io.StringIO()),
+            ):
+                if stop is None:
+                    client.decide({})
+                    sleep.assert_called_once_with(120.0)
+                else:
+                    with (
+                        patch.object(stop, "wait", side_effect=wait) as stop_wait,
+                        self.assertRaises(CancelledError),
+                    ):
+                        client.decide({})
+                    stop_wait.assert_called_once_with(120.0)
+                    sleep.assert_not_called()
+            self.assertEqual(
+                events,
+                ["post", ("wait", 120.0)] + ([] if cancel else ["post"]),
+            )
 
     def test_rejects_malformed_keys_without_revealing_them(self):
         for key in (

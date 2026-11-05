@@ -2222,9 +2222,65 @@ class RunnerTests(unittest.TestCase):
                 ("4",),
             )
 
-    def test_jev_fatal_or_uncertain_errors_never_enter_automatic_row_retries(self):
+    def test_jev_automatic_transport_passes_reuse_the_saved_classification_stage(self):
+        from neurips2026_locus.jev import JevUncertainSubmissionError
+
+        self.records = [{"content": f"rule {i}"} for i in range(3)]
+        self.write_rows()
+        arguments = [*self.args]
+        arguments[0] = "LOCUS"
+        arguments += ["--provider", "typesafe", "--workers", "1"]
+        decide = self.jev_client.decide
+        stages = []
+
+        def fail_confidence(client, payload):
+            excerpt = payload["state"]["excerpt"]
+            confidence = "confidence_label" in payload["questions"]
+            stages.append((excerpt, confidence))
+            if excerpt == "rule 0" and confidence:
+                client.requests.append(payload)
+                raise JevUncertainSubmissionError(
+                    "Bounded transport recovery exhausted",
+                    transport_error="ReadError",
+                    attempts=5,
+                )
+            return decide(client, payload)
+
+        output = self.directory / "outputs" / "LOCUS_typesafe.jsonl"
+        ledger = self.directory / "runs" / "LOCUS_typesafe.sqlite3"
+        with patch.object(self.jev_client, "decide", fail_confidence):
+            self.assertEqual(self.runner.main(arguments), 2)
+            self.assertEqual(stages.count(("rule 0", False)), 1)
+            self.assertEqual(stages.count(("rule 0", True)), 3)
+            self.assertIn(("rule 2", True), stages[:6])
+            before = list(stages)
+            self.assertEqual(self.runner.main(arguments), 2)
+            self.assertEqual(stages, before)
+        self.assertFalse(output.exists())
+        with closing(sqlite3.connect(ledger)) as db:
+            self.assertEqual(self.runner.read_retry_passes(db), 2)
+            saved_stages = db.execute(
+                "SELECT source_id,request_sha256,response_json,response_sha256 "
+                "FROM responses ORDER BY request_sha256"
+            ).fetchall()
+        self.assertEqual(self.runner.main([*arguments, "--retry-failed"]), 0)
+        requests = self.jev_client.instances[-1].requests
+        self.assertEqual(len(requests), 1)
+        self.assertIn("confidence_label", requests[0]["questions"])
+        self.assertEqual(len(output.read_text().splitlines()), 3)
+        with closing(sqlite3.connect(ledger)) as db:
+            self.assertEqual(self.runner.read_retry_passes(db), 3)
+            recovered = set(
+                db.execute(
+                    "SELECT source_id,request_sha256,response_json,response_sha256 "
+                    "FROM responses"
+                )
+            )
+        self.assertTrue(set(saved_stages).issubset(recovered))
+
+    def test_jev_global_errors_never_enter_automatic_row_retries(self):
         from neurips2026_locus.jev import (
-            JevConnectionError, JevHTTPError, JevUncertainSubmissionError
+            JevError, JevHTTPError
         )
 
         self.records = [{"content": f"rule {i}"} for i in range(3)]
@@ -2233,8 +2289,7 @@ class RunnerTests(unittest.TestCase):
         arguments[0] = "LOCUS"
         for index, error in enumerate(
             (
-                JevConnectionError("Connection budget exhausted"),
-                JevUncertainSubmissionError("Possible submission"),
+                JevError("Unsupported local HTTP configuration"),
                 JevHTTPError(400),
                 JevHTTPError(401),
                 pipeline.InputError("Source hash mismatch"),
