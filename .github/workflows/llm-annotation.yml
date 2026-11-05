@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'llm_annotation/**'
+      - 'human_annotation/LOCUS_snorkel_labels.csv'
       - '.github/workflows/llm-annotation.yml'
   pull_request:
     paths:
       - 'llm_annotation/**'
+      - 'human_annotation/LOCUS_snorkel_labels.csv'
       - '.github/workflows/llm-annotation.yml'
 
 permissions:

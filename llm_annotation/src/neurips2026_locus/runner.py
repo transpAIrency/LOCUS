@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import CancelledError
 from contextlib import closing
+import csv
+from hashlib import sha256
 import importlib.util
 import json
 import os
@@ -27,7 +29,7 @@ from .contract import (
     example_overlap,
 )
 from .municipal_law_annotation.municipal_law_jev_adapter import build_jev_request
-from .files import project_root
+from .files import atomic_text_output, project_root
 
 # Source checkouts use their own data/runs directories. Installed wheels use
 # the working directory, where the caller supplies the external data files.
@@ -35,6 +37,12 @@ ROOT = project_root()
 
 PROVIDERS = ("typesafe", "openai", "google")
 SDK_MODULES = {"typesafe": "httpx", "openai": "openai", "google": "google.genai"}
+
+
+def default_human_csv():
+    """Use the human annotation release beside this source component."""
+    base = ROOT.parent if (ROOT / "pyproject.toml").is_file() else ROOT
+    return base / "human_annotation/LOCUS_snorkel_labels.csv"
 
 
 def parse_args(argv=None):
@@ -48,7 +56,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "--input",
         type=Path,
-        help="human_audit defaults to data/benchmark/text_250.jsonl; LOCUS requires a path.",
+        help="human_audit defaults to human_annotation/LOCUS_snorkel_labels.csv; LOCUS requires JSONL. Explicit human-audit JSONL remains supported.",
     )
     parser.add_argument(
         "--name", help="Run name; defaults to the dataset name. Reuse it to resume."
@@ -120,7 +128,7 @@ def parse_args(argv=None):
         parser.error("LOCUS requires --input /absolute/path/to/original.jsonl")
     if args.dataset == "human_audit" and args.expect_rows not in (None, 250):
         parser.error("human_audit requires exactly 250 rows")
-    args.input = (args.input or ROOT / "data/benchmark/text_250.jsonl").resolve()
+    args.input = (args.input or default_human_csv()).resolve()
     if args.dataset == "LOCUS" and args.input.suffix == ".gz":
         parser.error(
             "LOCUS requires uncompressed JSONL for efficient indexed reads; decompress separately first"
@@ -147,6 +155,91 @@ def ledger_path(args):
 def output_path(args):
     """Name a provider export beside the other outputs for this checkout."""
     return ROOT / "outputs" / f"{args.name}_{args.provider}.jsonl"
+
+
+def input_cache_path(args):
+    """Keep the model-only CSV projection separate from labels and outputs."""
+    return ROOT / "runs" / f"{args.name}_{args.provider}.input.jsonl"
+
+
+def _human_csv_records(path, stop_event=None):
+    """Read only IDs and exact legal text from the human annotation CSV."""
+    records = []
+    previous_limit = csv.field_size_limit()
+    try:
+        csv.field_size_limit(sys.maxsize)
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle, strict=True)
+            fields = reader.fieldnames
+            if (
+                fields is None
+                or len(fields) != len(set(fields))
+                or not {"audit_id", "text"} <= set(fields)
+            ):
+                raise pipeline.InputError(
+                    "human_audit CSV needs unique column names including audit_id and text"
+                )
+            for row in reader:
+                pipeline.check_cancelled(stop_event)
+                if None in row or any(value is None for value in row.values()):
+                    raise pipeline.InputError(
+                        "human_audit CSV has a row whose columns do not match its header"
+                    )
+                records.append(
+                    {"audit_id": row["audit_id"], "header": "", "content": row["text"]}
+                )
+                if len(records) > 250:
+                    raise pipeline.InputError("human_audit CSV exceeds 250 rows")
+    except (csv.Error, UnicodeError) as exc:
+        raise pipeline.InputError("Invalid human_audit CSV") from exc
+    finally:
+        csv.field_size_limit(previous_limit)
+    return records
+
+
+def _select_human_input(args, records):
+    """Validate a deterministic text-only cache without writing during preflight."""
+    data = "".join(pipeline.canonical_json(row) + "\n" for row in records).encode(
+        "utf-8"
+    )
+    digest = sha256(data).hexdigest()
+    cache = input_cache_path(args)
+    if cache.exists() and cache.read_bytes() != data:
+        raise pipeline.InputError(
+            "human_audit text or order differs from this run's input cache; use a new --name"
+        )
+    if ledger_path(args).exists():
+        with closing(
+            pipeline.AnnotationLedger.open_readonly(ledger_path(args))
+        ) as ledger:
+            if ledger.run_metadata.get("input_sha256") != digest:
+                raise pipeline.InputError(
+                    "human_audit CSV does not match this checkpoint's input; use a new --name"
+                )
+    args.human_csv_input = args.input
+    args.input = cache
+    args._prepared_input_bytes = data
+    return digest
+
+
+def _materialize_human_input(args, stop_event=None):
+    """Publish the validated model-only cache only for an actual annotation run."""
+    data = getattr(args, "_prepared_input_bytes", None)
+    if data is None:
+        return
+    pipeline.check_cancelled(stop_event)
+    if batch.file_stamp(args.human_csv_input) != args._human_csv_stamp:
+        raise pipeline.InputError("human_audit CSV changed after preflight")
+    if args.input.exists():
+        if args.input.read_bytes() != data:
+            raise pipeline.InputError("human_audit input cache changed after preflight")
+        return
+    try:
+        with atomic_text_output(args.input) as handle:
+            handle.write(data.decode("utf-8"))
+    except FileExistsError:
+        if args.input.read_bytes() != data:
+            raise pipeline.InputError("Conflicting human_audit input cache") from None
 
 
 def arguments(args):
@@ -199,7 +292,8 @@ def preflight(args, stop_event=None):
             if provider == "openai"
             else batch.DEFAULT_GOOGLE_MODEL
         )
-    before = batch.file_stamp(args.input)
+    source_input = args.input
+    before = batch.file_stamp(source_input)
     # Fail on missing local dependencies/keys before scanning a large corpus.
     # Dry runs intentionally need neither and never contact a provider.
     if not args.dry_run:
@@ -215,11 +309,21 @@ def preflight(args, stop_event=None):
             jev.get_api_key(args.api_key_env)
         else:
             batch.api_key(provider, args.api_key_env)
+    csv_records = (
+        _human_csv_records(source_input, stop_event)
+        if args.dataset == "human_audit" and source_input.suffix.lower() == ".csv"
+        else None
+    )
+    source = (
+        enumerate(csv_records)
+        if csv_records is not None
+        else pipeline.iter_jsonl(source_input)
+    )
     rows, first = 0, None
     total_characters, maximum_characters, truncated_rows = 0, 0, 0
     audit_ids = set()
     last_progress = time.monotonic()
-    for index, record in pipeline.iter_jsonl(args.input):
+    for index, record in source:
         pipeline.check_cancelled(stop_event)
         pipeline.source_identity(record, index)
         text = compose_input_text(record)
@@ -266,13 +370,21 @@ def preflight(args, stop_event=None):
         raise pipeline.InputError(
             f"Expected {args.expect_rows:,} rows, found {rows:,}; no API calls made"
         )
-    input_hash = pipeline.sha256_file(args.input)
+    input_hash = (
+        _select_human_input(args, csv_records)
+        if csv_records is not None
+        else pipeline.sha256_file(source_input)
+    )
     pipeline.check_cancelled(stop_event)
     args.input_sha256 = input_hash
-    if batch.file_stamp(args.input) != before:
+    if batch.file_stamp(source_input) != before:
         raise pipeline.InputError("Input changed during preflight")
+    if csv_records is not None:
+        args._human_csv_stamp = before
     local_args = pipeline.build_parser().parse_args(arguments(args))
     pipeline.distinct_paths(args.input, local_args.ledger, output_path(args))
+    if csv_records is not None:
+        pipeline.distinct_paths(source_input, local_args.ledger, output_path(args))
     if provider == "typesafe":
         text, _ = pipeline.limit_text(compose_input_text(first), args.max_text_chars)
         build_jev_request(text, args.model)
@@ -307,7 +419,7 @@ def preflight(args, stop_event=None):
             {
                 "dataset": args.dataset,
                 "rows": rows,
-                "input": str(args.input),
+                "input": str(source_input),
                 "provider": provider,
                 "model": args.model,
                 "input_sha256": input_hash,
@@ -414,6 +526,7 @@ def main(argv=None):
             pipeline.check_cancelled(stop)
             if args.dry_run:
                 return 0
+            _materialize_human_input(args, stop)
             status = run_provider(args, stop)
             pipeline.check_cancelled(stop)
             print(f"{args.provider}: {status}", flush=True)

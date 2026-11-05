@@ -1,6 +1,7 @@
 """Offline integration of both batch providers and their real response parsers."""
 
 from contextlib import ExitStack, closing
+import csv
 import io
 import httpx
 import json
@@ -1172,13 +1173,19 @@ class RunnerTests(unittest.TestCase):
             )
 
     def test_dataset_names_resolve_to_explicit_inputs_and_distinct_run_names(self):
+        (self.directory / "pyproject.toml").write_text("# Source-checkout marker\n")
         audit = self.runner.parse_args(
             ["human_audit", "--provider", "google", "--env-file", str(self.env)]
         )
         self.assertEqual(audit.dataset, "human_audit")
         self.assertEqual(audit.name, "human_audit")
         self.assertEqual(
-            audit.input, (self.directory / "data/benchmark/text_250.jsonl").resolve()
+            audit.input,
+            (
+                self.directory.parent
+                / "human_annotation"
+                / "LOCUS_snorkel_labels.csv"
+            ).resolve(),
         )
         self.assertEqual(audit.expect_rows, 250)
         corpus = self.runner.parse_args(
@@ -1543,6 +1550,270 @@ class RunnerTests(unittest.TestCase):
                 "HARMONIZED_METADATA_NOT_MODEL_INPUT", json.dumps(payloads)
             )
             self.assertNotIn("original-source-0", json.dumps(payloads))
+
+
+class CSVRunnerTests(unittest.TestCase):
+    """The human CSV supplies text; its annotations never become model input."""
+
+    write_rows = RunnerTests.write_rows
+
+    def setUp(self):
+        RunnerTests.setUp(self)
+        self.component = self.directory / "project" / "llm_annotation"
+        self.component.mkdir(parents=True)
+        (self.component / "pyproject.toml").write_text("# Source-checkout marker\n")
+        self.stack.enter_context(patch.object(self.runner, "ROOT", self.component))
+        self.csv_path = (
+            self.component.parent
+            / "human_annotation"
+            / "LOCUS_snorkel_labels.csv"
+        )
+        self.csv_path.parent.mkdir()
+        self.csv_rows = [
+            {
+                "audit_id": row["audit_id"],
+                "text": row["content"],
+                "function": "HUMAN_ONLY_NOT_MODEL_INPUT",
+                "topic": "HUMAN_ONLY_NOT_MODEL_INPUT",
+                "confidence": "HUMAN_ONLY_NOT_MODEL_INPUT",
+                "function_eligible": "0",
+                "ec1_notes": "HUMAN_ONLY_NOT_MODEL_INPUT",
+            }
+            for row in self.records
+        ]
+        self.write_csv()
+        self.args = [
+            "human_audit",
+            "--env-file",
+            str(self.env),
+            "--provider",
+            "google",
+            "--model",
+            "fake-jev-1",
+            "--check-every",
+            "0.00001",
+        ]
+
+    def write_csv(self):
+        with self.csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(self.csv_rows[0]))
+            writer.writeheader()
+            writer.writerows(self.csv_rows)
+
+    def cache_path(self, provider="google", name="human_audit"):
+        return self.component / "runs" / f"{name}_{provider}.input.jsonl"
+
+    def test_csv_default_projects_all_text_without_human_labels_for_each_provider(self):
+        self.csv_rows[0]["text"] = 'Quoted "words", café, and commas.\nAnother rule.'
+        self.write_csv()
+        for provider in self.runner.PROVIDERS:
+            with self.subTest(provider=provider):
+                self.assertEqual(
+                    self.runner.main([*self.args, "--provider", provider]), 0
+                )
+                cache = self.cache_path(provider)
+                rows = [json.loads(line) for line in cache.read_text().splitlines()]
+                self.assertEqual(len(rows), 250)
+                for source, projected in zip(self.csv_rows, rows):
+                    self.assertEqual(
+                        projected,
+                        {
+                            "audit_id": source["audit_id"],
+                            "header": "",
+                            "content": source["text"],
+                        },
+                    )
+                self.assertEqual(
+                    cache.read_text(),
+                    "".join(pipeline.canonical_json(row) + "\n" for row in rows),
+                )
+                if provider == "typesafe":
+                    payloads = [
+                        request
+                        for client in self.jev_client.instances
+                        for request in client.requests
+                    ]
+                    self.assertEqual(len(payloads), 500)
+                else:
+                    payloads = list(getattr(self, provider).uploads.values())
+                    self.assertEqual(len(payloads[-1]), 250)
+                self.assertNotIn("HUMAN_ONLY_NOT_MODEL_INPUT", json.dumps(payloads))
+                output = self.component / "outputs" / f"human_audit_{provider}.jsonl"
+                published = [
+                    json.loads(line) for line in output.read_text().splitlines()
+                ]
+                self.assertEqual(len(published), 250)
+                self.assertEqual(published[0]["content"], self.csv_rows[0]["text"])
+                self.assertNotIn("HUMAN_ONLY_NOT_MODEL_INPUT", output.read_text())
+                before = (
+                    sum(len(client.requests) for client in self.jev_client.instances),
+                    self.openai.submissions,
+                    self.google.submissions,
+                )
+                self.assertEqual(
+                    self.runner.main([*self.args, "--provider", provider]), 0
+                )
+                self.assertEqual(
+                    (
+                        sum(
+                            len(client.requests)
+                            for client in self.jev_client.instances
+                        ),
+                        self.openai.submissions,
+                        self.google.submissions,
+                    ),
+                    before,
+                )
+
+    def test_csv_dry_runs_do_not_materialize_inputs_or_other_files(self):
+        def snapshot():
+            return {
+                str(path.relative_to(self.directory)): path.read_bytes()
+                for path in self.directory.rglob("*")
+                if path.is_file()
+            }
+
+        before = snapshot()
+        for provider in self.runner.PROVIDERS:
+            self.assertEqual(
+                self.runner.main([*self.args, "--provider", provider, "--dry-run"]), 0
+            )
+            self.assertEqual(snapshot(), before)
+        self.assertEqual(self.jev_client.instances, [])
+        self.assertEqual((self.openai.submissions, self.google.submissions), (0, 0))
+
+    def test_bad_csv_fails_before_materializing_or_paying(self):
+        original = json.loads(json.dumps(self.csv_rows))
+        for case in (
+            "missing_text_column",
+            "duplicate_header",
+            "missing_value",
+            "extra_value",
+            "unterminated_quote",
+            "duplicate_id",
+            "padded_id",
+            "blank_text",
+            "wrong_count",
+            "invalid_utf8",
+        ):
+            with self.subTest(case=case):
+                self.csv_rows = json.loads(json.dumps(original))
+                if case == "duplicate_id":
+                    self.csv_rows[-1]["audit_id"] = self.csv_rows[0]["audit_id"]
+                elif case == "padded_id":
+                    self.csv_rows[0]["audit_id"] += " "
+                elif case == "blank_text":
+                    self.csv_rows[0]["text"] = " \n "
+                elif case == "wrong_count":
+                    self.csv_rows.pop()
+                self.write_csv()
+                if case in {
+                    "missing_text_column",
+                    "duplicate_header",
+                    "missing_value",
+                    "extra_value",
+                    "unterminated_quote",
+                }:
+                    stream = io.StringIO(newline="")
+                    writer = csv.writer(stream, lineterminator="\n")
+                    if case == "missing_text_column":
+                        writer.writerow(["audit_id", "not_text"])
+                        writer.writerows(
+                            (row["audit_id"], row["text"]) for row in self.csv_rows
+                        )
+                    elif case == "duplicate_header":
+                        writer.writerow(["audit_id", "text", "audit_id"])
+                        writer.writerows(
+                            (row["audit_id"], row["text"], row["audit_id"])
+                            for row in self.csv_rows
+                        )
+                    else:
+                        writer.writerow(["audit_id", "text"])
+                        writer.writerows(
+                            (row["audit_id"], row["text"])
+                            for row in self.csv_rows[:-1]
+                        )
+                        last = self.csv_rows[-1]
+                        if case == "missing_value":
+                            writer.writerow([last["audit_id"]])
+                        elif case == "extra_value":
+                            writer.writerow([last["audit_id"], last["text"], "EXTRA"])
+                        else:
+                            stream.write(last["audit_id"] + ',"unterminated text')
+                    self.csv_path.write_text(stream.getvalue(), encoding="utf-8")
+                elif case == "invalid_utf8":
+                    self.csv_path.write_bytes(b"audit_id,text\n0,\xff\n")
+                self.assertEqual(self.runner.main(self.args), 2)
+                self.assertEqual(self.jev_client.instances, [])
+                self.assertEqual(
+                    (self.openai.submissions, self.google.submissions), (0, 0)
+                )
+                self.assertFalse((self.component / "runs").exists())
+
+    def test_label_only_changes_resume_but_text_or_order_changes_do_not(self):
+        self.assertEqual(self.runner.main(self.args), 0)
+        cache_before = self.cache_path().read_bytes()
+        self.csv_rows[0]["function"] = "A_CHANGED_HUMAN_LABEL"
+        self.csv_rows[0]["ec1_notes"] = "New human notes only"
+        self.write_csv()
+        self.assertEqual(self.runner.main(self.args), 0)
+        self.assertEqual(self.google.submissions, 1)
+        self.assertEqual(self.cache_path().read_bytes(), cache_before)
+        original = json.loads(json.dumps(self.csv_rows))
+        for change in ("text", "order"):
+            with self.subTest(change=change):
+                self.csv_rows = json.loads(json.dumps(original))
+                if change == "text":
+                    self.csv_rows[0]["text"] += " Changed law."
+                else:
+                    self.csv_rows[0], self.csv_rows[1] = (
+                        self.csv_rows[1],
+                        self.csv_rows[0],
+                    )
+                self.write_csv()
+                with patch.object(batch.google_batch, "GoogleBatchClient") as client:
+                    self.assertEqual(self.runner.main(self.args), 2)
+                client.assert_not_called()
+                self.assertEqual(self.google.submissions, 1)
+                self.assertEqual(self.cache_path().read_bytes(), cache_before)
+
+    def test_csv_changes_during_or_after_preflight_stop_before_materialization(self):
+        for phase in ("reading", "materializing"):
+            with self.subTest(phase=phase):
+                self.write_csv()
+                if phase == "reading":
+                    target = "_human_csv_records"
+                    original = self.runner._human_csv_records
+
+                    def change_csv(*args, **kwargs):
+                        records = original(*args, **kwargs)
+                        with self.csv_path.open("a") as handle:
+                            handle.write("\n")
+                        return records
+
+                else:
+                    target = "_materialize_human_input"
+                    original = self.runner._materialize_human_input
+
+                    def change_csv(*args, **kwargs):
+                        with self.csv_path.open("a") as handle:
+                            handle.write("\n")
+                        return original(*args, **kwargs)
+
+                with patch.object(self.runner, target, side_effect=change_csv):
+                    self.assertEqual(self.runner.main(self.args), 2)
+                self.assertEqual(self.jev_client.instances, [])
+                self.assertEqual(
+                    (self.openai.submissions, self.google.submissions), (0, 0)
+                )
+                self.assertFalse((self.component / "runs").exists())
+
+    def test_missing_csv_fails_before_paying(self):
+        self.csv_path.unlink()
+        self.assertEqual(self.runner.main(self.args), 2)
+        self.assertEqual(self.jev_client.instances, [])
+        self.assertEqual((self.openai.submissions, self.google.submissions), (0, 0))
+        self.assertFalse((self.component / "runs").exists())
 
 
 if __name__ == "__main__":

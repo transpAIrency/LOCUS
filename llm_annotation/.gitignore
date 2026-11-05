@@ -18,9 +18,8 @@ outputs/
 # Small, verified release data belongs in data/. Keep full local corpora out
 # of Git; their fingerprints and availability are recorded in the manifest.
 data/local/
-# Full corpora are external inputs. Keep only the released text-only audit input.
+# Model inputs are external or generated from the human-annotation CSV.
 *.jsonl
-!data/benchmark/text_250.jsonl
 
 # Packaging and test by-products
 .pytest_cache/
