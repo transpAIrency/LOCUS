@@ -1540,6 +1540,61 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(service.submissions, 1)
             self.assertEqual(self.query("SELECT COUNT(*) FROM annotations"), [(2,)])
 
+    def test_smaller_shard_resume_keeps_successes_after_upload_timeout(self):
+        for provider in ("openai", "google"):
+            with (
+                self.subTest(provider=provider),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                service, _ = self.fixture(Path(temporary), provider, count=5)
+                self.assertEqual(
+                    self.run_action("submit", "--batch-size", "2", resume=False), 0
+                )
+                self.assertEqual(self.run_action("collect"), 0)
+                saved = self.query(
+                    "SELECT source_id,annotation_json FROM annotations ORDER BY source_id"
+                )
+                self.assertEqual(len(saved), 2)
+                with (
+                    patch.object(batch.time, "time", return_value=1000),
+                    patch.object(
+                        service,
+                        "upload",
+                        side_effect=httpx.WriteTimeout("temporary upload timeout"),
+                    ),
+                ):
+                    self.assertEqual(
+                        self.run_action("submit", "--batch-size", "2"),
+                        batch.RETRYABLE_OPERATION_EXIT_CODE,
+                    )
+                self.assertEqual(service.submissions, 1)
+                with closing(sqlite3.connect(self.ledger)) as db:
+                    retry_at = batch.summary(db)["operation_retry_at"]
+                with patch.object(batch.time, "time", return_value=retry_at + 1):
+                    self.assertEqual(self.run_action("submit", "--batch-size", "1"), 0)
+                self.assertEqual(self.run_action("collect"), 0)
+                for _ in range(2):
+                    self.assertEqual(self.run_action("submit", "--batch-size", "1"), 0)
+                    self.assertEqual(self.run_action("collect"), 0)
+                key = "custom_id" if provider == "openai" else "key"
+                accepted = [
+                    row[key] for rows in service.uploads.values() for row in rows
+                ]
+                self.assertEqual(len(accepted), 5)
+                self.assertEqual(len(set(accepted)), 5)
+                self.assertEqual(
+                    [len(rows) for rows in service.uploads.values()], [2, 1, 1, 1]
+                )
+                self.assertEqual(service.submissions, 4)
+                annotations = dict(
+                    self.query("SELECT source_id,annotation_json FROM annotations")
+                )
+                self.assertEqual(len(annotations), 5)
+                for source_id, encoded in saved:
+                    self.assertEqual(annotations[source_id], encoded)
+                self.assertEqual(self.run_action("submit", "--batch-size", "1"), 0)
+                self.assertEqual(service.submissions, 4)
+
     def test_utf8_byte_budget_splits_shards_and_rejects_oversized_rows_before_calls(
         self,
     ):
@@ -1728,12 +1783,12 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.object(self.runner, "ROOT", self.directory))
         self.stack.enter_context(patch.object(pipeline, "JevClient", FakeJevClient))
-        self.stack.enter_context(
+        self.openai_constructor = self.stack.enter_context(
             patch.object(
                 batch.openai_batch, "OpenAIBatchClient", return_value=self.openai
             )
         )
-        self.stack.enter_context(
+        self.google_constructor = self.stack.enter_context(
             patch.object(
                 batch.google_batch, "GoogleBatchClient", return_value=self.google
             )
@@ -1803,6 +1858,37 @@ class RunnerTests(unittest.TestCase):
                 after,
             )
 
+    def test_default_and_explicit_timeouts_reach_the_selected_provider_client(self):
+        for provider in self.runner.PROVIDERS:
+            for timeout in (None, 12.5):
+                with self.subTest(provider=provider, timeout=timeout):
+                    label = "default" if timeout is None else "custom"
+                    arguments = [
+                        *self.args,
+                        "--provider", provider,
+                        "--name", f"timeout_{provider}_{label}",
+                    ]
+                    if timeout is not None:
+                        arguments += ["--timeout", str(timeout)]
+                    expected = timeout or (45.0 if provider == "typesafe" else 600.0)
+                    if provider == "typesafe":
+                        with patch.object(
+                            pipeline, "JevClient", wraps=self.jev_client
+                        ) as client:
+                            self.assertEqual(self.runner.main(arguments), 0)
+                        calls = client.call_args_list
+                        option = "timeout_seconds"
+                    else:
+                        client = getattr(self, f"{provider}_constructor")
+                        before = client.call_count
+                        self.assertEqual(self.runner.main(arguments), 0)
+                        calls = client.call_args_list[before:]
+                        option = "timeout"
+                    self.assertTrue(calls)
+                    self.assertTrue(
+                        all(call.kwargs[option] == expected for call in calls)
+                    )
+
     def test_dataset_defaults_and_input_overrides_keep_distinct_run_names(self):
         (self.directory / "pyproject.toml").write_text("# Source-checkout marker\n")
         audit = self.runner.parse_args(
@@ -1826,6 +1912,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(audit.workers, 4)
         self.assertFalse(audit.cleanup_remote_files)
         self.assertEqual(audit.max_retry_passes, 2)
+        self.assertEqual(audit.timeout, 600.0)
         self.assertNotIn("--max-text-chars", self.runner.arguments(audit))
         for provider in self.runner.PROVIDERS:
             with self.subTest(provider=provider):
@@ -1847,7 +1934,9 @@ class RunnerTests(unittest.TestCase):
                 )
                 self.assertIsNone(corpus.expect_rows)
                 self.assertEqual(corpus.max_text_chars, 16000)
-                self.assertEqual(corpus.batch_size, 50000)
+                self.assertEqual(
+                    corpus.batch_size, 20000 if provider == "google" else 50000
+                )
                 self.assertEqual(
                     corpus.max_inflight_batches,
                     {"typesafe": 1, "openai": 256, "google": 100}[provider],
@@ -1856,6 +1945,9 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(corpus.workers, 16)
                 self.assertFalse(corpus.cleanup_remote_files)
                 self.assertEqual(corpus.max_retry_passes, 2)
+                self.assertEqual(
+                    corpus.timeout, 45.0 if provider == "typesafe" else 600.0
+                )
                 no_retries = self.runner.parse_args(
                     [*arguments, "--max-retry-passes", "0"]
                 )
@@ -1898,6 +1990,8 @@ class RunnerTests(unittest.TestCase):
                         "2",
                         "--workers",
                         "7",
+                        "--timeout",
+                        "12.5",
                     ]
                 )
                 self.assertEqual(override.input, self.input.resolve())
@@ -1906,6 +2000,7 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(override.max_inflight_batches, 3)
                 self.assertEqual(override.check_every, 2)
                 self.assertEqual(override.workers, 7)
+                self.assertEqual(override.timeout, 12.5)
                 forwarded = self.runner.arguments(override)
                 self.assertEqual(
                     forwarded[forwarded.index("--max-text-chars") + 1], "8000"

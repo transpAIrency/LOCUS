@@ -113,7 +113,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "--batch-size",
         type=pipeline.positive_int,
-        help="Requests per batch: LOCUS defaults to 50000; human_audit to 5000.",
+        help="Requests per batch: LOCUS defaults to Google 20000 / OpenAI 50000; human_audit to 5000.",
     )
     parser.add_argument(
         "--max-inflight-batches",
@@ -124,6 +124,11 @@ def parse_args(argv=None):
         "--check-every",
         type=pipeline.positive_float,
         help="Minutes between batch polls (default 0.5).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=pipeline.positive_float,
+        help="HTTP timeout in seconds (default 600 for Google/OpenAI; 45 for Jev).",
     )
     parser.add_argument(
         "--retry-failed",
@@ -174,7 +179,10 @@ def parse_args(argv=None):
     if args.workers is None:
         args.workers = 16 if args.dataset == "LOCUS" else pipeline.DEFAULT_WORKERS
     if args.batch_size is None:
-        args.batch_size = 50000 if args.dataset == "LOCUS" else pipeline.DEFAULT_BATCH_SIZE
+        if args.dataset == "LOCUS":
+            args.batch_size = 20000 if args.provider == "google" else 50000
+        else:
+            args.batch_size = pipeline.DEFAULT_BATCH_SIZE
     if args.max_inflight_batches is None:
         args.max_inflight_batches = (
             {"openai": 256, "google": 100}.get(
@@ -185,6 +193,8 @@ def parse_args(argv=None):
         )
     if args.check_every is None:
         args.check_every = 0.5
+    if args.timeout is None:
+        args.timeout = 45.0 if args.provider == "typesafe" else 600.0
     if args.name is None:
         args.name = args.dataset
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", args.name):
@@ -309,6 +319,8 @@ def arguments(args):
         "include",
         "--model",
         args.model,
+        "--timeout",
+        str(args.timeout),
     ]
     # The default .env may be absent when keys/model IDs come from the shell.
     if args.env_file.is_file():
