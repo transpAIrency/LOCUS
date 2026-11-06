@@ -1,0 +1,389 @@
+{
+  "inputs": {
+    "sections": "llm_annotation/data/locus_v1.1_harmonized.jsonl",
+    "counties": "harmonization/county_harmonization.csv",
+    "human": "human_annotation/LOCUS_snorkel_labels.csv"
+  },
+  "expected": {
+    "sha256": "58a591ca111605e1cdca69142b924e215f133a4f7cdb849804eae9a53bdab2df",
+    "sections": 3073770,
+    "documents": 2360,
+    "counties": 3144,
+    "covered_counties": 2410,
+    "human_audit": 250
+  },
+  "max_text_chars": 16000,
+  "usage_scope": "omit",
+  "publication": {
+    "license": "cc-by-nc-4.0",
+    "repo_id": "LocalLaws/LOCUS-v1",
+    "pretty_name": "LOCUS v1.1",
+    "citation": "@article{peskoff2026freeing,\n  title={Freeing the Law with LOCUS: A Local Ordinance Corpus for the United States},\n  author={Peskoff, Denis and Barrow, Joe and Vu, Christopher and Davenport, Diag},\n  journal={arXiv preprint arXiv:2606.19334},\n  year={2026}\n}",
+    "citation_source": "https://huggingface.co/datasets/LocalLaws/LOCUS-v1#citation"
+  },
+  "models": {
+    "google": {
+      "completed": true,
+      "exports": [
+        {
+          "path": "llm_annotation/outputs/LOCUS_release_google.jsonl",
+          "ledger": "llm_annotation/runs/LOCUS_release_google.sqlite3",
+          "kind": "harness"
+        }
+      ],
+      "permanent_failures": [
+        {
+          "document_id": "doc_090f5248e96517d2959e888c",
+          "section_index": 41,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_1420a2081547da87448f419f",
+          "section_index": 1956,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_2003574485032a07f76d749f",
+          "section_index": 597,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_2753526900035416cfae4173",
+          "section_index": 88,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_2fc4ad5964791d2a0e858ddf",
+          "section_index": 1537,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_2fc4ad5964791d2a0e858ddf",
+          "section_index": 1541,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_2fc4ad5964791d2a0e858ddf",
+          "section_index": 1654,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_30266d55a126e5b901cc900d",
+          "section_index": 1871,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_306491702d8e0e6299c9a22e",
+          "section_index": 459,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_31ff6ce66331b2c578edb37c",
+          "section_index": 1484,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_328894b73ad8196d556dd89f",
+          "section_index": 1582,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_38ac266f76f21a065c1ca24e",
+          "section_index": 1768,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_397364153b0b7b3ef7328c65",
+          "section_index": 568,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_39a4b4f5a3966302385e208c",
+          "section_index": 59,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_40613dc5d0eadcc024d1a2a9",
+          "section_index": 2508,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_440225a250fe1532314a7a32",
+          "section_index": 343,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_46cf6b95fed4b63bc635b5f7",
+          "section_index": 8008,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_4b78c3f400597e89df9af77c",
+          "section_index": 1345,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_53ec65f8cf192450c2bd6855",
+          "section_index": 980,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_54c90785071c55d830dd5c3d",
+          "section_index": 1415,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_6145aee57e2a3b29c9a70a21",
+          "section_index": 873,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_63ce42574125a328bc07ba24",
+          "section_index": 1133,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_67f9776b7fd27355c69970eb",
+          "section_index": 2181,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_7435bf7143087e4c30d5e6f9",
+          "section_index": 935,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_745c60ad68e343d120565a16",
+          "section_index": 1661,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_7468d79caa839e4dd7b6942a",
+          "section_index": 2023,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_8010bbbae55379c12faeadc5",
+          "section_index": 1577,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_8acac3c378c449b8696ba747",
+          "section_index": 2667,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_8acac3c378c449b8696ba747",
+          "section_index": 5710,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_925dced2408a4318a22a9551",
+          "section_index": 369,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_9745c34ccc06dbb0108b3186",
+          "section_index": 1153,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_9d62d30946ba1dd6f73f002a",
+          "section_index": 589,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_9e78bc68407c794d070cb2e0",
+          "section_index": 341,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_9ed9c2e852b67698c9559c90",
+          "section_index": 1847,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_a1c4f1345547ac4d2c0b9801",
+          "section_index": 990,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_a3d6a1ea43220fcd1962fb55",
+          "section_index": 1800,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_ad06e81537c6b5cafef95af9",
+          "section_index": 792,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_ad06e81537c6b5cafef95af9",
+          "section_index": 1399,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_b4d24c68e329364d5365676d",
+          "section_index": 2073,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_b4e2d2a3ea9b811236aa9699",
+          "section_index": 1699,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_b52862576c79accc1af09082",
+          "section_index": 509,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_b679ca92d7ab84678e88b758",
+          "section_index": 868,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_b9bf0241ea0eb0dc330104b4",
+          "section_index": 63,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_c8373c9709d2592151e00141",
+          "section_index": 67,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_c8414f74655e614ae5b526fb",
+          "section_index": 2292,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_ce106e0e7e294d9bfde546c6",
+          "section_index": 1660,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_d4b47657eaf2f93c9a61e91a",
+          "section_index": 943,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_db0494e5e0c1d5ba72d54a6f",
+          "section_index": 167,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_dd0454fa71f32eb35cf7d4c4",
+          "section_index": 1336,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_dd6c2e237f960f4dc0d61509",
+          "section_index": 1889,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_e39ec2633bbc488b6d405f2b",
+          "section_index": 1770,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_e54ba97adcd8427df6c3fee0",
+          "section_index": 1009,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_e8a753eed39a2bbdd72ec316",
+          "section_index": 750,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_ea22ecbdc3bc9b2edcce3af3",
+          "section_index": 1135,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_ea8801dbef9377f4075de3fd",
+          "section_index": 17,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_eb94b2ca985016b78528d0c0",
+          "section_index": 638,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_ec0d434017cd65b35e25cb62",
+          "section_index": 1085,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_ef038a65fbae25f8545893ab",
+          "section_index": 337,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_f22f4c3c92215e72875e1fbb",
+          "section_index": 563,
+          "reason": "PROHIBITED_CONTENT"
+        },
+        {
+          "document_id": "doc_f4835edeeaeca186b25902bc",
+          "section_index": 1050,
+          "reason": "PROHIBITED_CONTENT"
+        }
+      ],
+      "audit": {
+        "path": "llm_annotation/outputs/human_audit_release_google.jsonl",
+        "ledger": "llm_annotation/runs/human_audit_release_google.sqlite3",
+        "input": "llm_annotation/runs/human_audit_release_google.input.jsonl"
+      },
+      "run_start_utc": null,
+      "run_end_utc": null,
+      "run_dates_note": "Actual API run start/end dates have not been established. Collection timestamps are not substituted."
+    },
+    "openai": {
+      "completed": true,
+      "exports": [
+        {
+          "path": "llm_annotation/outputs/LOCUS_release_openai.jsonl",
+          "ledger": "llm_annotation/runs/LOCUS_release_openai.sqlite3",
+          "kind": "harness"
+        }
+      ],
+      "permanent_failures": [
+        {
+          "document_id": "doc_575d048a11c6ff24f3556184",
+          "section_index": 159,
+          "reason": "Provider classification does not satisfy the annotation schema"
+        }
+      ],
+      "audit": {
+        "path": "llm_annotation/outputs/human_audit_release_openai.jsonl",
+        "ledger": "llm_annotation/runs/human_audit_release_openai.sqlite3",
+        "input": "llm_annotation/runs/human_audit_release_openai.input.jsonl"
+      },
+      "run_start_utc": null,
+      "run_end_utc": null,
+      "run_dates_note": "Actual API run start/end dates have not been established. Collection timestamps are not substituted."
+    },
+    "typesafe": {
+      "completed": false,
+      "exports": [
+        {
+          "path": "llm_annotation/outputs/LOCUS_release_typesafe.jsonl",
+          "ledger": "llm_annotation/runs/LOCUS_release_typesafe.sqlite3",
+          "kind": "harness"
+        }
+      ],
+      "audit": {
+        "path": "llm_annotation/outputs/human_audit_release_typesafe.jsonl",
+        "ledger": "llm_annotation/runs/human_audit_release_typesafe.sqlite3",
+        "input": "llm_annotation/runs/human_audit_release_typesafe.input.jsonl"
+      },
+      "run_start_utc": null,
+      "run_end_utc": null,
+      "run_dates_note": "Actual API run start/end dates have not been established. Collection timestamps are not substituted."
+    }
+  }
+}
