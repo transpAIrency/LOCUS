@@ -195,7 +195,7 @@ class CsvAndSectionTests(unittest.TestCase):
             counties, documents = records.read_counties(self.write_csv(directory, "county.csv", self.county_rows()))
         self.assertEqual(documents["doc"]["represented_county_fips"], ["02001", "02003"])
         self.assertEqual(documents["doc"]["represented_county_name"], ["First County", "Second County"])
-        self.assertEqual(documents["doc"]["jurisdiction_type"], "consolidated")
+        self.assertEqual(documents["doc"]["jurisdiction_type"], "city-county")
         self.assertIsNone(counties[-1]["document_id"])
         self.assertIsNone(counties[-1]["section_count"])
         self.assertNotIn("selected_page_count", counties[0])
@@ -224,6 +224,26 @@ class CsvAndSectionTests(unittest.TestCase):
         raw["jurisdiction_geoid"] = "unknown"
         with self.assertRaises(records.ReleaseError):
             records.section_record(raw, documents)
+
+    def test_header_preserves_literal_hashes_and_removes_only_heading_marks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, documents = records.read_counties(self.write_csv(directory, "county.csv", self.county_rows()))
+        raw = {"document_id": "doc", "index": 0, "state": "ak",
+               "content": "Body.", "jurisdiction_geoid": "0200123"}
+        cases = (
+            ("  #4 REBAR CONT.  ", "#4 REBAR CONT."),
+            ("#14 Agricultural buildings", "#14 Agricultural buildings"),
+            ("#None for residential units", "#None for residential units"),
+            ("##4", "##4"),
+            ("  ### Example  ", "Example"),
+            ("###\tExample", "Example"),
+            ("## #4 REBAR CONT.", "#4 REBAR CONT."),
+            ("###", None),
+            ("  ", None),
+        )
+        for header, expected in cases:
+            with self.subTest(header=header):
+                self.assertEqual(records.section_record({**raw, "header": header}, documents)["header"], expected)
 
     def test_human_consensus_fields_and_eligibility_stay_independent(self):
         source = [

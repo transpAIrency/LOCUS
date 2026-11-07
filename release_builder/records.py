@@ -28,7 +28,7 @@ PROVIDERS = {
     "openai": ("classification_openai", "openai"),
     "typesafe": ("classification_jev", "jev"),
 }
-_TYPES = {"city": "city", "county": "county", "both": "consolidated", "other": "other"}
+_TYPES = {"city": "city", "county": "county", "both": "city-county", "other": "other"}
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
 _GEOID = re.compile(r"(?:[0-9]{5}|[0-9]{7}|[0-9]{10})\Z")
 _LABEL_FIELDS = {"primary_function", "subcategory", "confidence"}
@@ -187,7 +187,7 @@ def section_record(raw: dict[str, Any], documents: dict[str, dict[str, Any]]) ->
     if header is not None:
         if not isinstance(header, str):
             raise ReleaseError("header must be a string or null")
-        header = header.strip().lstrip("#").strip() or None
+        header = re.sub(r"^#+(?=\s|$)", "", header.strip()).strip() or None
     geoid = raw.get("jurisdiction_geoid")
     if not isinstance(geoid, str):
         raise ReleaseError("jurisdiction_geoid must be a source GEOID string")

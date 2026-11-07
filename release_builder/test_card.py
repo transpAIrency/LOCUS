@@ -12,6 +12,11 @@ def manifest():
         "counts": {"sections": 3073770, "labels": 3073770, "human_audit": 250,
                    "counties": 3144, "documents": 2360, "covered_counties": 2410,
                    "uncovered_counties": 734},
+        "models": {
+            "google": {"model_id": "gemini-3.8-flash", "rows_missing": 0},
+            "openai": {"model_id": "gpt-6-luna", "reasoning_effort": "low", "rows_missing": 0},
+            "typesafe": {"model_id": "jev-1.14.0", "rows_missing": 0},
+        },
         "human_audit_summary": {
             "rows": 250, "annotation_count_distribution": {"3": 250},
             "fields": {name: {"eligible": count} for name, count in eligible.items()},
@@ -49,6 +54,45 @@ class DatasetCardTests(unittest.TestCase):
         self.assertIn("76.7%", card)
         self.assertIn("**734 without a selected document**", card)
         self.assertIn(publication()["citation"], card)
+
+    def test_intro_links_models_and_missing_counts_follow_manifest(self):
+        data = manifest()
+        data["models"]["google"]["rows_missing"] = 60
+        data["models"]["openai"]["rows_missing"] = 1
+        card = render_dataset_card(data, publication())
+        self.assertIn("Local Ordinance Corpus for the United States", card)
+        self.assertIn("municipal and county legal text harmonized to county geography", card)
+        self.assertIn("[Paper](https://arxiv.org/abs/2606.19334)", card)
+        self.assertIn("[Code](https://github.com/transpAIrency/LOCUS)", card)
+        self.assertIn("Gemini (`gemini-3.8-flash`)", card)
+        self.assertIn("OpenAI (`gpt-6-luna`, low reasoning)", card)
+        self.assertIn("Jev (`jev-1.14.0`)", card)
+        self.assertIn("Gemini **60**; OpenAI **1**; Jev **0**", card)
+        self.assertIn("| Jev | function |", card)
+        self.assertNotIn("TypeSafe", card)
+        data["models"]["google"]["rows_missing"] = 0
+        self.assertIn("Gemini **0**; OpenAI **1**; Jev **0**", render_dataset_card(data, publication()))
+
+    def test_human_annotation_counts_distinguish_uniform_and_mixed_audits(self):
+        data = manifest()
+        self.assertIn("Each excerpt has three human annotations.", render_dataset_card(data, publication()))
+        data["human_audit_summary"]["annotation_count_distribution"] = {"3": 249, "2": 1}
+        card = render_dataset_card(data, publication())
+        self.assertIn("Human annotations per excerpt: 2 for 1 excerpt; 3 for 249 excerpts.", card)
+        self.assertNotIn("Each excerpt has three human annotations.", card)
+
+    def test_unverified_model_facts_are_rejected(self):
+        for mutate in (
+            lambda data: data.pop("models"),
+            lambda data: data["models"]["google"].update(model_id=""),
+            lambda data: data["models"]["openai"].pop("reasoning_effort"),
+            lambda data: data["models"]["typesafe"].update(rows_missing=True),
+            lambda data: data["models"]["google"].update(rows_missing=3073771),
+        ):
+            data = manifest()
+            mutate(data)
+            with self.assertRaises(ReleaseError):
+                render_dataset_card(data, publication())
 
     def test_sections_glossary_has_exact_25_columns_in_release_order(self):
         from release_builder.build import SECTION_COLUMNS

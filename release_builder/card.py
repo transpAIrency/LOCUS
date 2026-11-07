@@ -12,7 +12,7 @@ import re
 from .records import ReleaseError
 
 
-_PROVIDERS = {"google": "Gemini", "openai": "OpenAI", "typesafe": "Jev (TypeSafe)"}
+_PROVIDERS = {"google": "Gemini", "openai": "OpenAI", "typesafe": "Jev"}
 _FIELDS = ("function", "topic", "confidence")
 _SUBSETS = ("sections", "labels", "human_audit", "counties")
 
@@ -124,13 +124,38 @@ def _rate(numerator, denominator):
     return f"{numerator:,}/{denominator:,} ({100 * numerator / denominator:.1f}%)"
 
 
+def _models(manifest, counts):
+    models = manifest.get("models")
+    _require(isinstance(models, dict), "Dataset card needs measured model metadata")
+    for provider in _PROVIDERS:
+        model = models.get(provider)
+        _require(isinstance(model, dict) and _nonempty(model.get("model_id")),
+                 f"Dataset card needs a model_id for {provider}")
+        _require(_integer(model.get("rows_missing"))
+                 and model["rows_missing"] <= counts["sections"],
+                 f"Dataset card needs a valid rows_missing count for {provider}")
+    _require(_nonempty(models["openai"].get("reasoning_effort")),
+             "Dataset card needs OpenAI reasoning_effort")
+    return models
+
+
+def _human_annotation_counts(annotations):
+    if annotations == {3: sum(annotations.values())}:
+        return "Each excerpt has three human annotations."
+    return "Human annotations per excerpt: " + "; ".join(
+        f"{number} for {total:,} {'excerpt' if total == 1 else 'excerpts'}"
+        for number, total in sorted(annotations.items())) + "."
+
+
 def _glossary():
     rows = [
         ("document_id", "string", "no", "Stable source document identifier; join key with section_index."),
         ("section_index", "int64", "no", "Original index within its document; gaps and an initial zero are allowed."),
         ("state", "string", "no", "Uppercase two-letter jurisdiction state abbreviation."),
         ("jurisdiction_name", "string", "no", "Selected jurisdiction name from county harmonization."),
-        ("jurisdiction_type", "string", "no", "city, county, consolidated, or other; other is Washington, DC."),
+        ("jurisdiction_type", "string", "no",
+         "city, county, city-county, or other; city-county combines municipal/county "
+         "governments or functions, and other is Washington, DC."),
         ("jurisdiction_geoid", "string", "yes", "Single 5-digit county, 7-digit place, or 10-digit county-subdivision GEOID; null when several apply. Leading zeros are retained."),
         ("represented_county_fips", "list<string>", "no", "Nonempty list of represented county FIPS codes sorted by FIPS."),
         ("represented_county_name", "list<string>", "no", "County names aligned with represented_county_fips."),
@@ -161,6 +186,7 @@ def render_dataset_card(manifest, publication):
     publication = validate_publication(publication)
     counts = _counts(manifest)
     summary, annotations = _summary(manifest, counts)
+    models = _models(manifest, counts)
     lines = ["---", f"pretty_name: {_yaml(publication['pretty_name'])}", "language:", "- en",
              f"license: {_yaml(publication['license'])}"]
     if publication["license"] == "other":
@@ -175,8 +201,13 @@ def render_dataset_card(manifest, publication):
             lines += ["  default: true"]
         lines += ["  data_files:", "  - split: train", f"    path: {subset}/*.parquet"]
     lines += ["---", "", "# " + publication["pretty_name"], "",
-              "This release joins harmonized municipal-law sections to three model annotations and a human audit. "
-              "Labels describe primary function, regulated topic where applicable, and rubric confidence.",
+              "LOCUS (Local Ordinance Corpus for the United States) contains municipal and county legal text "
+              "harmonized to county geography. This release includes three models' annotations and a human audit "
+              "for primary function, regulated topic where applicable, and rubric confidence.",
+              "", "[Paper](https://arxiv.org/abs/2606.19334) · [Code](https://github.com/transpAIrency/LOCUS)",
+              "", f"Annotations use Gemini (`{models['google']['model_id']}`), "
+              f"OpenAI (`{models['openai']['model_id']}`, {models['openai']['reasoning_effort']} reasoning), "
+              f"and Jev (`{models['typesafe']['model_id']}`).",
               "", "## Subsets and coverage", "",
               "| Subset | Rows | Contents |", "|---|---:|---|"]
     descriptions = {"sections": "Default: identifiers, jurisdiction, text, consensus, and all model labels (25 columns).",
@@ -226,13 +257,14 @@ def render_dataset_card(manifest, publication):
               "A null topic with a non-null function means topic does not apply (`Context`, `Process`, or `Structural`). "
               "Topic is non-null exactly for answering models whose function is `Rules` or `Enforcement`. "
               "No ERROR strings or inferred labels are inserted. Per-model missing counts are in `manifest.json`.",
+              "", "Section rows without a model answer: " + "; ".join(
+                  f"{name} **{models[provider]['rows_missing']:,}**" for provider, name in _PROVIDERS.items()) + ".",
               "", "Consensus counts only models with valid answers. An answering model's inapplicable topic counts as "
               "a vote for not applicable; a missing model contributes no vote. A majority requires at least two matching votes. "
               "`topic_majority` null with `topic_votes` at least 2 means a majority for not applicable; at most 1 means no majority. "
               "All three agree when both vote counts equal 3. Confidence is reported separately for each model.",
               "", "## Human-audit agreement", "",
-              f"The released audit contains **{summary['rows']:,} excerpts**. " + "; ".join(
-                  f"{number} annotations for {total:,} excerpts" for number, total in sorted(annotations.items())) + ".",
+              f"The released audit contains **{summary['rows']:,} excerpts**. " + _human_annotation_counts(annotations),
               "", "The following table reports excerpts with human majority consensus for each field. These are "
               "consensus eligibility rates, not pairwise or chance-corrected inter-annotator agreement statistics.",
               "", "| Human field | Eligible consensus / audit excerpts |", "|---|---:|"]

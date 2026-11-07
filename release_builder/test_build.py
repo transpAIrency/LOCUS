@@ -296,7 +296,7 @@ class ReleaseBuildTests(unittest.TestCase):
         self.assertIn("| function | 1/2 (50.0%) |", card)
         self.assertIn("| Gemini | function | 1/1 (100.0%) | 1/1 (100.0%) |", card)
         self.assertIn("| OpenAI | topic | 0/1 (0.0%) | 1/1 (100.0%) |", card)
-        self.assertIn("| Jev (TypeSafe) | confidence | 1/1 (100.0%) | 1/1 (100.0%) |", card)
+        self.assertIn("| Jev | confidence | 1/1 (100.0%) | 1/1 (100.0%) |", card)
         for column in expected_columns:
             self.assertIn(f"`{column}`", card)
         for path in self.output.rglob("*.parquet"):
@@ -304,6 +304,25 @@ class ReleaseBuildTests(unittest.TestCase):
             for group in range(parquet.num_row_groups):
                 self.assertLessEqual(parquet.metadata.row_group(group).num_rows, 2)
                 self.assertEqual(parquet.metadata.row_group(group).column(0).compression, "ZSTD")
+
+    def test_city_county_jurisdiction_passes_full_build_and_readback(self):
+        with self.fixture.counties.open(encoding="utf-8", newline="") as handle:
+            counties = list(csv.DictReader(handle))
+        for row in counties:
+            if row["selected_document_id"] == "doc-ak":
+                row["selected_city_county"] = "both"
+        write_csv(self.fixture.counties, counties)
+
+        manifest = self.run_build()
+
+        county = next(row for row in pq.read_table(self.output / "counties").to_pylist()
+                      if row["document_id"] == "doc-ak")
+        self.assertEqual(county["jurisdiction_type"], "city-county")
+        sections = [row for row in pq.read_table(self.output / "sections").to_pylist()
+                    if row["document_id"] == "doc-ak"]
+        self.assertEqual(len(sections), 2)
+        self.assertTrue(all(row["jurisdiction_type"] == "city-county" for row in sections))
+        self.assertEqual(manifest["validation"]["parquet_readback"]["counties"], 4)
 
     def test_validation_only_does_not_publish_release_or_mutate_inputs(self):
         originals = {path: path.read_bytes() for path in [self.fixture.source, self.fixture.counties, self.fixture.human]}

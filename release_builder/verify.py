@@ -211,7 +211,8 @@ def verify_outputs(root, schemas, expected_counts, expected_samples):
         else:
             _require(document in documents and documents[document] == state,
                      f"Emitted county document or state differs from sections: {fips}")
-            _require(_text(row["jurisdiction_name"]) and row["jurisdiction_type"] in ("city", "county", "consolidated", "other"),
+            _require(_text(row["jurisdiction_name"])
+                     and row["jurisdiction_type"] in ("city", "county", "city-county", "other"),
                      f"Invalid emitted county jurisdiction: {fips}")
             _require(row["section_count"] == document_counts[document],
                      f"Emitted county section_count differs from sections: {fips}")

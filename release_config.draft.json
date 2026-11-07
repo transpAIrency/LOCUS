@@ -368,7 +368,7 @@
       "run_dates_note": "Actual API run start/end dates have not been established. Collection timestamps are not substituted."
     },
     "typesafe": {
-      "completed": false,
+      "completed": true,
       "exports": [
         {
           "path": "llm_annotation/outputs/LOCUS_release_typesafe.jsonl",
